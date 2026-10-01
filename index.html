@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Tagebuch</title>
+<meta name="description" content="Mein Tagebuch mit Bildern, Orten, Bewertungen und Rückblick.">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1c1d21" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Tagebuch">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..24,400..600,0..1,0&icon_names=add,add_a_photo,arrow_back,article,auto_stories,calendar_month,check,chevron_left,chevron_right,close,delete,description,download,edit,grid_view,history,location_on,map,my_location,play_arrow,search,sell,settings,star,today,upload&display=block">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="stylesheet" href="style.css?v=3">
+</head>
+<body>
+<div id="app">
+  <nav class="nav" id="nav" aria-label="Bereiche">
+    <div class="brand"><span class="ms fill">auto_stories</span><b>Tagebuch</b></div>
+    <button data-nav="calendar"><span class="ms">calendar_month</span><span>Kalender</span></button>
+    <button data-nav="timeline"><span class="ms">article</span><span>Zeitleiste</span></button>
+    <button data-nav="map"><span class="ms">map</span><span>Karte</span></button>
+    <button data-nav="attachments"><span class="ms">grid_view</span><span>Anhänge</span></button>
+    <button data-nav="search" class="nav-desk"><span class="ms">search</span><span>Suche</span></button>
+    <button data-nav="tags" class="nav-desk"><span class="ms">sell</span><span>Tags</span></button>
+    <button data-nav="memories"><span class="ms">history</span><span>An diesem Tag</span></button>
+    <button class="nav-settings sync-btn" data-act="settings" id="sync-btn"><span class="ms">settings</span><span>Einstellungen</span><i class="sync-dot"></i></button>
+  </nav>
+
+  <main id="main"></main>
+
+  <section id="mapview" hidden>
+    <div id="map" aria-label="Karte"></div>
+    <div class="map-chips" id="map-chips"></div>
+    <div class="map-empty" id="map-empty" hidden></div>
+  </section>
+
+  <button class="fab-new" data-act="new" aria-label="Neuer Eintrag"><span class="ms">add</span></button>
+
+  <div id="overlay" class="overlay" hidden></div>
+  <div id="lightbox" class="lightbox" hidden><img alt=""><button class="icon-btn" data-act="lightbox-close" aria-label="Schließen"><span class="ms">close</span></button></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</div>
+
+<script crossorigin="anonymous" src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script crossorigin="anonymous" src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
+<script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
+<script src="config.js?v=3"></script>
+<script src="store.js?v=3"></script>
+<script src="app.js?v=3"></script>
+</body>
+</html>
