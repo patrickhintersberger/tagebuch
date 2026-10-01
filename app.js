@@ -839,6 +839,27 @@
 
   window.TB_importDiariumFolder = importDiariumFolder;
 
+  // Videos ohne Vorschaubild nachträglich reparieren (einmal pro Start, nur bei sichtbarer App).
+  // Fehlversuche merkt sich das Gerät, damit defekte Dateien nicht immer wieder geladen werden.
+  let repairing = false;
+  async function repairPosters() {
+    if (repairing || importing || document.visibilityState !== 'visible') return;
+    repairing = true;
+    try {
+      let failed = [];
+      try { failed = JSON.parse(lsGet('tb-poster-fail') || '[]'); } catch {}
+      const todo = [];
+      S.entries.forEach(e => (e.photos || []).forEach(p => { if (p.kind === 'video' && !p.w && !failed.includes(p.id)) todo.push([e.id, p.id]); }));
+      for (const [eid, pid] of todo) {
+        if (document.visibilityState !== 'visible') break;
+        const r = await S.repairPoster(pid).catch(() => null);
+        if (!r) { failed.push(pid); lsSet('tb-poster-fail', JSON.stringify(failed.slice(-500))); continue; }
+        const cur = S.entry(eid);
+        if (cur && !(ed && ed.entry.id === eid)) S.saveEntry({ ...cur, photos: (cur.photos || []).map(p => p.id === pid ? { ...p, ...r } : p) });
+      }
+    } finally { repairing = false; }
+  }
+
   // ---------- Start ----------
   S.ready.then(() => {
     S.onChange(() => {
@@ -848,7 +869,7 @@
       if (ed) edMemory();
     });
     render();
-    S.sync();
+    Promise.resolve(S.sync()).then(repairPosters);
   });
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') {

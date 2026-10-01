@@ -11,6 +11,7 @@
     entries: {},    // id -> Eintrag
     templates: {},  // id -> Vorlage
     pending: [],    // Bild-IDs, die noch hochgeladen werden müssen
+    pendingThumbs: [], // nur das Vorschaubild muss noch hochgeladen werden (nachträglich erzeugt)
     shas: {},       // Dateischlüssel ('2026', 'templates') -> zuletzt bekannter Stand im Repo
     dirty: [],      // Dateischlüssel mit lokalen Änderungen, die noch hochgeladen werden müssen
     status: 'local', // local | syncing | ok | error | offline | notoken
@@ -64,6 +65,7 @@
       store.entries = s.entries || {};
       store.templates = s.templates || {};
       store.pending = s.pending || [];
+      store.pendingThumbs = s.pendingThumbs || [];
       store.shas = s.shas || {};
       store.dirty = Array.isArray(s.dirty) ? s.dirty : [];
     }
@@ -73,7 +75,7 @@
     });
   }
   function saveLocal() {
-    return idbSet('kv', 'state', { entries: store.entries, templates: store.templates, pending: store.pending, shas: store.shas, dirty: store.dirty });
+    return idbSet('kv', 'state', { entries: store.entries, templates: store.templates, pending: store.pending, pendingThumbs: store.pendingThumbs, shas: store.shas, dirty: store.dirty });
   }
 
   let saveTimer = null;
@@ -206,6 +208,16 @@
         if (!res.ok && res.status !== 422) throw new Error(`Bild-Upload fehlgeschlagen (Fehler ${res.status}).`);
       }
       store.pending = store.pending.filter(x => x !== id);
+      await saveLocal();
+    }
+    for (const id of [...store.pendingThumbs]) {
+      const blob = await idbGet('blobs', 't:' + id);
+      if (blob) {
+        const res = await gh('PUT', `thumbs/${id}.jpg`, { message: `Vorschaubild ${id}`, content: await blobToB64(blob), branch: cfg.branch });
+        checkAuth(res);
+        if (!res.ok && res.status !== 422) throw new Error(`Bild-Upload fehlgeschlagen (Fehler ${res.status}).`);
+      }
+      store.pendingThumbs = store.pendingThumbs.filter(x => x !== id);
       await saveLocal();
     }
   }
@@ -367,28 +379,59 @@
   }
 
   // Vorschaubild aus einem Video: ein Standbild kurz nach dem Anfang.
+  // Zwei Wege parallel, der erste Treffer gewinnt: an eine Stelle springen (Desktop) und stumm anspielen
+  // (iPhone lädt Videodaten erst beim Abspielen). Der Blob wird als video/mp4 übergeben, weil manche
+  // Browser iPhone-Videos (video/quicktime) sonst ablehnen.
   function videoPoster(file) {
     return new Promise(resolve => {
-      const url = URL.createObjectURL(file);
+      const url = URL.createObjectURL(new Blob([file], { type: 'video/mp4' }));
       const v = document.createElement('video');
       let done = false;
-      const finish = out => { if (done) return; done = true; clearTimeout(timer); URL.revokeObjectURL(url); v.removeAttribute('src'); try { v.load(); } catch {} resolve(out); };
-      const timer = setTimeout(() => finish(null), 10000);
-      v.muted = true; v.playsInline = true; v.preload = 'auto';
-      v.onerror = () => finish(null);
-      v.onloadeddata = () => { try { v.currentTime = Math.min(0.5, (v.duration || 1) / 2); } catch { finish(null); } };
-      v.onseeked = async () => {
+      const finish = out => {
+        if (done) return; done = true; clearTimeout(timer);
+        try { v.pause(); } catch {}
+        URL.revokeObjectURL(url); v.removeAttribute('src'); try { v.load(); } catch {}
+        v.remove();
+        resolve(out);
+      };
+      const timer = setTimeout(() => finish(null), 20000);
+      const grab = () => {
+        if (done || !v.videoWidth) return;
         try {
-          const img = { width: v.videoWidth, height: v.videoHeight };
-          const f = Math.min(1, cfg.thumbMax / Math.max(img.width, img.height));
+          const f = Math.min(1, cfg.thumbMax / Math.max(v.videoWidth, v.videoHeight));
           const c = document.createElement('canvas');
-          c.width = Math.max(1, Math.round(img.width * f)); c.height = Math.max(1, Math.round(img.height * f));
+          c.width = Math.max(1, Math.round(v.videoWidth * f)); c.height = Math.max(1, Math.round(v.videoHeight * f));
           c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
-          c.toBlob(b => finish(b ? { blob: b, w: v.videoWidth, h: v.videoHeight, dur: Math.round(v.duration || 0) } : null), 'image/jpeg', 0.84);
+          const w = v.videoWidth, h = v.videoHeight, dur = Math.round(v.duration || 0);
+          c.toBlob(b => finish(b ? { blob: b, w, h, dur } : null), 'image/jpeg', 0.84);
         } catch { finish(null); }
       };
+      const target = () => Math.min(0.5, (v.duration || 1) / 2);
+      v.muted = true; v.defaultMuted = true; v.playsInline = true; v.preload = 'auto';
+      v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
+      // unsichtbar ins Dokument hängen: manche Browser laden Videos außerhalb des Dokuments nicht
+      v.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+      document.body.appendChild(v);
+      v.onerror = () => finish(null);
+      v.onloadeddata = () => { try { v.currentTime = target(); } catch {} };
+      v.onseeked = grab;
+      v.ontimeupdate = () => { if (v.currentTime > 0 && v.currentTime >= target() - 0.05) grab(); };
+      v.onended = grab;
       v.src = url;
+      try { const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch {}
     });
+  }
+  // Erzeugt nachträglich ein fehlendes Vorschaubild (z.B. wenn es auf einem anderen Gerät nicht geklappt hat).
+  async function repairPoster(id) {
+    const url = await photoURL(id, 'video');
+    if (!url) return null;
+    const poster = await videoPoster(await (await fetch(url)).blob());
+    if (!poster) return null;
+    await idbSet('blobs', 't:' + id, poster.blob);
+    urls.delete('t:' + id);
+    if (!store.pendingThumbs.includes(id)) store.pendingThumbs.push(id);
+    saveSoon();
+    return { w: poster.w, h: poster.h, dur: poster.dur };
   }
   // Videos werden unverändert gespeichert (Diarium liefert sie bereits komprimiert als MP4).
   async function addVideo(file) {
@@ -492,6 +535,7 @@
     exportJSON: serialize,
     addPhoto,
     addVideo,
+    repairPoster,
     photoURL,
     flush: saveLocal,
     sync,
