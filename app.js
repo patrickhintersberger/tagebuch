@@ -661,18 +661,29 @@
 
   // ---------- Rahmen ----------
   const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags, countries: viewCountries, habits: viewHabits };
-  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten' };
+  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', travel: 'Reisekarte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten' };
   function render() {
     $$('#nav [data-nav]').forEach(b => b.setAttribute('aria-current', b.dataset.nav === ui.view ? 'page' : 'false'));
     const isMap = ui.view === 'map';
+    const isTravel = ui.view === 'travel';
     const care = careCheck();
     $('#app').dataset.view = ui.view;
-    $('#top-title').textContent = TITLES[ui.view] || 'Tagebuch';
+    $('#top-title').textContent = TITLES[ui.view] || 'Daily';
     $('#menu-dot').hidden = care.level === 'ok';
     $('#menu-dot').dataset.level = care.level;
     try { if (navigator.setAppBadge) { if (care.count + care.open.length) navigator.setAppBadge(care.count + care.open.length); else navigator.clearAppBadge(); } } catch {}
-    $('#main').hidden = isMap;
-    if (isMap) { if ($('#mapview').hidden) showMap(); else refreshMap(); }
+    $('#main').hidden = isMap || isTravel;
+    $('#travelview').hidden = !isTravel;
+    if (isTravel) {
+      // Die Reisekarte läuft als eigene App im Rahmen und bleibt beim Wechseln der Ansicht geladen
+      $('#mapview').hidden = true;
+      if (!$('#travelview iframe')) {
+        const f = document.createElement('iframe');
+        f.title = 'Reisekarte'; f.allow = 'geolocation';
+        f.src = /github\.io$/.test(location.hostname) ? '/reisekarte/' : 'https://patrickhintersberger.github.io/reisekarte/';
+        $('#travelview').appendChild(f);
+      }
+    } else if (isMap) { if ($('#mapview').hidden) showMap(); else refreshMap(); }
     else {
       $('#mapview').hidden = true;
       const main = $('#main');

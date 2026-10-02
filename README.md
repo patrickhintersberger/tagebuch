@@ -1,4 +1,6 @@
-# Tagebuch
+# Daily
+
+Persönliche App: Tagebuch, Gewohnheiten, Länderzähler und Reisekarte (die Reisekarte ist als eigene App unter `/reisekarte/` eingebunden).
 
 Eigenes Tagebuch im Stil von Diarium: Einträge mit Bildern, Ort, Bewertung (1–10), Tags und Vorlagen (Morgenroutine, Abendroutine, Wochen-Review). Dazu Kalender, Karte der Bilder und Orte sowie der Rückblick „An diesem Tag“.
 
