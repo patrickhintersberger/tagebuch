@@ -627,7 +627,7 @@
   function bkRow(b) {
     return `<div class="bk ${b.done ? 'done' : ''}" data-act="bk-open" data-id="${esc(b.id)}" tabindex="0">
       <button class="hb-check" data-act="bk-toggle" data-id="${esc(b.id)}" aria-pressed="${!!b.done}" aria-label="Erledigt">${ms('check')}</button>
-      <div><b>${esc(b.title)}</b>${bkSub(b) ? `<small>${esc(bkSub(b))}</small>` : ''}${b.costNote ? `<small class="bk-note">${esc(b.costNote)}</small>` : ''}</div></div>`;
+      <div><b>${esc(b.title)}</b>${bkSub(b) ? `<small>${esc(bkSub(b))}</small>` : ''}${b.costNote ? `<small class="bk-note">${esc(b.costNote)}</small>` : ''}${b.travel != null ? `<small class="bk-travel">${ms('luggage')}Anreise ab Deutschland: ${b.travel ? 'ca. ' + eur(b.travel) : 'keine'}${b.travelNote ? ' · ' + esc(b.travelNote) : ''}</small>` : ''}</div></div>`;
   }
   function viewBucket(main) {
     const all = S.bucket;
@@ -644,6 +644,7 @@
     const sumOnce = open.filter(b => b.cost && b.costPer !== 'day' && !buy(b)).reduce((n, b) => n + b.cost, 0);
     const sumBuy = open.filter(b => b.cost && buy(b)).reduce((n, b) => n + b.cost, 0);
     const noCost = open.filter(b => b.cost == null).length;
+    const sumTravel = open.filter(b => b.travel).reduce((n, b) => n + b.travel, 0);
     main.innerHTML = `<div class="page">
       <header class="page-head row"><div><h1>Bucket-Liste</h1><p>${open.length} offen · ${done.length} erledigt${age != null ? ` · du bist ${age}` : ''}</p></div>
         <div class="row-btns"><button class="btn" data-act="bk-new">${ms('add')} Ziel</button></div></header>
@@ -652,8 +653,8 @@
       ${sug.length ? `<section class="memory"><header>${ms('star')}<div><b>Vorschläge für jetzt</b><span>Für deine Wochen- und Monatsplanung</span></div></header>
         ${sug.map(({ b, reason }) => `<div class="bk sug" data-act="bk-open" data-id="${esc(b.id)}" tabindex="0"><div><em>${esc(reason)}</em><b>${esc(b.title)}</b>${bkSub(b) ? `<small>${esc(bkSub(b))}</small>` : ''}</div>
           <button class="btn small ghost" data-act="bk-plan" data-id="${esc(b.id)}">Diesen Monat</button></div>`).join('')}</section>` : ''}
-      ${sumOnce || sumBuy ? `<div class="ct-tiles bk-cost"><div><b>${eur(sumOnce)}</b><span>offene Erlebnisse vor Ort</span></div><div><b>${eur(sumBuy)}</b><span>offene Anschaffungen</span></div><div><b>${noCost}</b><span>Ziele ohne Kostenangabe</span></div></div>
-        <p class="hint">Geschätzte Kosten des Erlebnisses vor Ort, ohne Anreise. Reiseziele stehen als Tagesbudget in der Zeile und sind in der Summe nicht enthalten.</p>` : ''}
+      ${sumOnce || sumBuy ? `<div class="ct-tiles bk-cost"><div><b>${eur(sumOnce)}</b><span>einmalige Erlebnisse vor Ort</span></div><div><b>${eur(sumTravel)}</b><span>Anreise ab Deutschland, wenn jedes Ziel einzeln angeflogen wird</span></div><div><b>${eur(sumBuy)}</b><span>offene Anschaffungen</span></div><div><b>${noCost}</b><span>Ziele ohne Kostenangabe</span></div></div>
+        <p class="hint">Geschätzte Kosten des Erlebnisses vor Ort, ohne Anreise. Reiseziele stehen als Tagesbudget in der Zeile und sind in der Summe nicht enthalten. Die Anreise ab Deutschland steht je Ziel in einer eigenen Zeile, falls du schon in der Gegend bist.</p>` : ''}
       <div class="chips">${[['open', 'Offen'], ['done', 'Erledigt'], ['all', 'Alle']].map(([k, n]) => `<button class="chip" data-act="bk-filter" data-f="${k}" aria-pressed="${ui.bkFilter === k}">${n}</button>`).join('')}</div>
       ${all.length ? [...groups.entries()].map(([k, items]) => `<h2 class="ct-h">${esc(k)}</h2><div class="list">${items.map(bkRow).join('')}</div>`).join('') || '<p class="hint">Hier ist nichts.</p>'
         : empty('flag', 'Noch keine Ziele', 'Trage ein, was du in deinem Leben noch machen willst. Mit „+ Ziel“ gehen auch mehrere Zeilen auf einmal.')}
@@ -688,6 +689,8 @@
           <div class="hb-f3"><label>Kosten vor Ort (€)<input name="cost" type="number" inputmode="decimal" min="0" value="${esc(d.cost == null ? '' : d.cost)}" placeholder="ohne Anreise"></label>
             <label>Gilt<select name="costPer"><option value="" ${d.costPer !== 'day' ? 'selected' : ''}>einmalig</option><option value="day" ${d.costPer === 'day' ? 'selected' : ''}>pro Tag</option></select></label></div>
           <input name="costNote" type="text" value="${esc(d.costNote || '')}" placeholder="Wofür genau, z.B. Tandemsprung pro Person">
+          <div class="hb-f3"><label>Anreise ab Deutschland (€)<input name="travel" type="number" inputmode="decimal" min="0" value="${esc(d.travel == null ? '' : d.travel)}" placeholder="hin und zurück"></label></div>
+          <input name="travelNote" type="text" value="${esc(d.travelNote || '')}" placeholder="Womit, z.B. Hin- und Rückflug pro Person">
           <textarea name="note" rows="3" placeholder="Notiz: mit wem, was es braucht, warum es dir wichtig ist">${esc(d.note || '')}</textarea>
           <div class="row-btns">${b ? `<button type="button" class="btn danger ghost" data-act="bk-delete" data-id="${esc(b.id)}">Löschen</button>` : ''}<button class="btn">Speichern</button></div>
         </form></section></div></div>`;
@@ -698,7 +701,8 @@
       const f = new FormData(ev.target);
       const int = k => { const n = parseInt(f.get(k), 10); return isFinite(n) && n > 0 ? n : null; };
       const base = { cat: String(f.get('cat')), ageFrom: int('ageFrom'), ageTo: int('ageTo'), months: f.getAll('months').map(Number), plan: String(f.get('plan') || ''), note: String(f.get('note')).trim(), loc: bkLoc,
-        cost: String(f.get('cost')).trim() === '' ? null : Math.max(0, parseFloat(String(f.get('cost')).replace(',', '.')) || 0), costPer: String(f.get('costPer') || ''), costNote: String(f.get('costNote')).trim() };
+        cost: String(f.get('cost')).trim() === '' ? null : Math.max(0, parseFloat(String(f.get('cost')).replace(',', '.')) || 0), costPer: String(f.get('costPer') || ''), costNote: String(f.get('costNote')).trim(),
+        travel: String(f.get('travel')).trim() === '' ? null : Math.max(0, parseFloat(String(f.get('travel')).replace(',', '.')) || 0), travelNote: String(f.get('travelNote')).trim() };
       if (b) S.saveBucket({ ...b, ...base, title: String(f.get('title')).trim(), done: String(f.get('done') || '') });
       else String(f.get('title')).split('\n').map(t => t.replace(/^[-*•\d.)\s]+/, '').trim()).filter(Boolean).forEach((title, i) => S.saveBucket({ ...base, title, done: '', createdAt: Date.now() + i }));
       closeSettings(); toast('Gespeichert');

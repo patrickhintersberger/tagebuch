@@ -488,3 +488,7 @@ img.missing { opacity: .35; }
 .bk-cost { margin-top: 14px; }
 .bk-cost b { font-size: 21px; }
 .bk small.bk-note { color: var(--ink-3); }
+.bk small.bk-travel { display: flex; align-items: center; gap: 4px; color: var(--ink-2); margin-top: 3px; }
+.bk small.bk-travel .ms { font-size: 15px; color: var(--ink-3); }
+.ct-tiles.bk-cost { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 700px) { .ct-tiles.bk-cost { grid-template-columns: repeat(2, 1fr); } }
