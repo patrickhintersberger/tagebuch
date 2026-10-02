@@ -10,6 +10,8 @@
   const store = {
     entries: {},    // id -> Eintrag
     templates: {},  // id -> Vorlage
+    habits: {},     // id -> Gewohnheit
+    logs: {},       // id (Gewohnheit_Datum) -> Tageswert einer Gewohnheit
     pending: [],    // Bild-IDs, die noch hochgeladen werden müssen
     pendingThumbs: [], // nur das Vorschaubild muss noch hochgeladen werden (nachträglich erzeugt)
     shas: {},       // Dateischlüssel ('2026', 'templates') -> zuletzt bekannter Stand im Repo
@@ -64,6 +66,8 @@
     if (s) {
       store.entries = s.entries || {};
       store.templates = s.templates || {};
+      store.habits = s.habits || {};
+      store.logs = s.logs || {};
       store.pending = s.pending || [];
       store.pendingThumbs = s.pendingThumbs || [];
       store.shas = s.shas || {};
@@ -75,7 +79,7 @@
     });
   }
   function saveLocal() {
-    return idbSet('kv', 'state', { entries: store.entries, templates: store.templates, pending: store.pending, pendingThumbs: store.pendingThumbs, shas: store.shas, dirty: store.dirty });
+    return idbSet('kv', 'state', { entries: store.entries, templates: store.templates, habits: store.habits, logs: store.logs, pending: store.pending, pendingThumbs: store.pendingThumbs, shas: store.shas, dirty: store.dirty });
   }
 
   let saveTimer = null;
@@ -132,19 +136,26 @@
       updatedAt: Date.now(),
       templates: Object.values(store.templates).sort((x, y) => (x.name || '').localeCompare(y.name || '')),
       entries: Object.values(store.entries).sort(byWhen),
+      habits: Object.values(store.habits),
+      logs: Object.values(store.logs),
     }, null, 1);
   }
 
   // ---------- Aufteilung in Dateien ----------
   const yearOf = e => (e.date || '0000').slice(0, 4);
+  // Dateischlüssel -> Sammlung: 'templates', 'habits', '2026' (Einträge), 'h2026' (Gewohnheits-Tageswerte)
+  const collOf = key => key === 'templates' || key === 'habits' ? key : key[0] === 'h' ? 'logs' : 'entries';
   function bucket(key) {
-    if (key === 'templates') return Object.values(store.templates);
+    const c = collOf(key);
+    if (c === 'templates' || c === 'habits') return Object.values(store[c]);
+    if (c === 'logs') return Object.values(store.logs).filter(l => 'h' + yearOf(l) === key);
     return Object.values(store.entries).filter(e => yearOf(e) === key);
   }
-  function bucketKeys() { return [...new Set(['templates', ...Object.values(store.entries).map(yearOf)])]; }
+  function bucketKeys() { return [...new Set(['templates', 'habits', ...Object.values(store.entries).map(yearOf), ...Object.values(store.logs).map(l => 'h' + yearOf(l))])]; }
   function fileBody(key) {
-    if (key === 'templates') return JSON.stringify({ version: 1, templates: bucket(key).sort((x, y) => (x.name || '').localeCompare(y.name || '')) }, null, 1);
-    return JSON.stringify({ version: 1, year: key, entries: bucket(key).sort(byWhen) }, null, 1);
+    const c = collOf(key);
+    const items = c === 'entries' ? bucket(key).sort(byWhen) : bucket(key).sort((x, y) => String(x.name || x.id).localeCompare(String(y.name || y.id)));
+    return JSON.stringify({ version: 1, ...(c === 'entries' ? { year: key } : {}), [c]: items }, null, 1);
   }
   const revs = {}; // zählt Änderungen je Datei, damit Änderungen während eines Uploads nicht verloren gehen
   function markDirty(key) {
@@ -191,7 +202,7 @@
     if (!res.ok) throw new Error(`GitHub antwortet mit Fehler ${res.status}.`);
     const list = await res.json();
     const out = {};
-    (Array.isArray(list) ? list : []).forEach(f => { const m = /^(templates|\d{4})\.json$/.exec(f.name); if (m) out[m[1]] = f.sha; });
+    (Array.isArray(list) ? list : []).forEach(f => { const m = /^(templates|habits|h?\d{4})\.json$/.exec(f.name); if (m) out[m[1]] = f.sha; });
     return out;
   }
 
@@ -244,7 +255,7 @@
             if (!res.ok) throw new Error(`GitHub antwortet mit Fehler ${res.status}.`);
             const text = await res.text();
             const data = text.trim() ? JSON.parse(text) : {};
-            const target = key === 'templates' ? 'templates' : 'entries';
+            const target = collOf(key);
             const rem = toMap(data[target]);
             const merged = mergeMaps(store[target], rem);
             if (!sameMaps(merged, store[target])) changedLocal = true;
@@ -518,6 +529,29 @@
       emit(); schedulePush();
       return item;
     },
+    get habits() { return Object.values(store.habits).filter(h => !h.deleted).sort((a, b) => (a.order || 0) - (b.order || 0) || (a.createdAt || 0) - (b.createdAt || 0)); },
+    habit(id) { const h = store.habits[id]; return h && !h.deleted ? h : null; },
+    get logs() { return Object.values(store.logs); },
+    saveHabit(h) {
+      const now = Date.now();
+      const item = { createdAt: now, ...h, updatedAt: now };
+      if (!item.id) item.id = uid();
+      store.habits[item.id] = item;
+      markDirty('habits');
+      emit(); schedulePush();
+      return item;
+    },
+    deleteHabit(id) {
+      store.habits[id] = { id, deleted: true, updatedAt: Date.now() };
+      markDirty('habits');
+      emit(); schedulePush();
+    },
+    logValue(hid, date) { const l = store.logs[hid + '_' + date]; return l ? l.v || 0 : 0; },
+    setLog(hid, date, v) {
+      store.logs[hid + '_' + date] = { id: hid + '_' + date, h: hid, date, v: Math.max(0, +v || 0), updatedAt: Date.now() };
+      markDirty('h' + date.slice(0, 4));
+      emit(); schedulePush();
+    },
     deleteTemplate(id) {
       store.templates[id] = { id, deleted: true, updatedAt: Date.now() };
       markDirty('templates');
@@ -529,6 +563,8 @@
       // Nur fehlende Einträge übernehmen, vorhandene bleiben unverändert.
       (data.entries || []).forEach(e => { if (e && e.id && !store.entries[e.id]) { store.entries[e.id] = { ...e, updatedAt: now }; markDirty(yearOf(e)); n++; } });
       (data.templates || []).forEach(t => { if (t && t.id && !store.templates[t.id]) { store.templates[t.id] = { ...t, updatedAt: now }; markDirty('templates'); } });
+      (data.habits || []).forEach(h => { if (h && h.id && !store.habits[h.id]) { store.habits[h.id] = { ...h, updatedAt: now }; markDirty('habits'); } });
+      (data.logs || []).forEach(l => { if (l && l.id && l.date && !store.logs[l.id]) { store.logs[l.id] = { ...l, updatedAt: now }; markDirty('h' + yearOf(l)); } });
       emit(); schedulePush();
       return n;
     },

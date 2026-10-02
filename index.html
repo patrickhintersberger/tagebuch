@@ -17,11 +17,11 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..24,400..600,0..1,0&icon_names=add,add_a_photo,arrow_back,article,auto_stories,calendar_month,check,chevron_left,chevron_right,close,delete,description,download,edit,grid_view,history,location_on,map,my_location,play_arrow,public,search,sell,settings,star,today,upload&display=block">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..24,400..600,0..1,0&icon_names=add,add_a_photo,arrow_back,article,auto_stories,calendar_month,check,chevron_left,chevron_right,close,delete,description,download,edit,grid_view,history,location_on,map,menu,my_location,play_arrow,public,remove,search,sell,settings,star,task_alt,today,upload,warning&display=block">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="style.css?v=5">
+<link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
 <div id="app">
@@ -33,10 +33,14 @@
     <button data-nav="attachments"><span class="ms">grid_view</span><span>Anhänge</span></button>
     <button data-nav="search" class="nav-desk"><span class="ms">search</span><span>Suche</span></button>
     <button data-nav="tags" class="nav-desk"><span class="ms">sell</span><span>Tags</span></button>
+    <button data-nav="habits"><span class="ms">task_alt</span><span>Gewohnheiten</span></button>
     <button data-nav="countries"><span class="ms">public</span><span>Länderzähler</span></button>
     <button data-nav="memories"><span class="ms">history</span><span>An diesem Tag</span></button>
     <button class="nav-settings sync-btn" data-act="settings" id="sync-btn"><span class="ms">settings</span><span>Einstellungen</span><i class="sync-dot"></i></button>
   </nav>
+
+  <header class="topbar"><button class="icon-btn" data-act="menu" aria-label="Menü öffnen"><span class="ms">menu</span><i class="menu-dot" id="menu-dot" hidden></i></button><b id="top-title">Tagebuch</b></header>
+  <div class="nav-backdrop" id="nav-backdrop" data-act="menu-close" hidden></div>
 
   <main id="main"></main>
 
@@ -57,8 +61,8 @@
 <script crossorigin="anonymous" src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
 <script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
-<script src="config.js?v=5"></script>
-<script src="store.js?v=5"></script>
-<script src="app.js?v=5"></script>
+<script src="config.js?v=6"></script>
+<script src="store.js?v=6"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

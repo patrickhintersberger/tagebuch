@@ -29,6 +29,7 @@
     builtYear: null,
     attLimit: 300,
     ctYear: String(new Date().getFullYear()),
+    hbDate: todayISO(),
     memDate: todayISO(),
     mapYear: '',
   };
@@ -401,6 +402,186 @@
     ui.built = 'countries';
   }
 
+  // ---------- Ansicht: Gewohnheiten ----------
+  // Tageswert v: bei „Erreichen“ der Fortschritt (z.B. 1500 von 2500 ml), bei „Vermeiden“ 1 = Ausrutscher.
+  const HB_COLORS = ['#f6a5ad', '#8fe3cf', '#9ad4f5', '#43e0b5', '#b548e6', '#e884bd', '#f74c4c', '#9ebfd6', '#f5c451', '#7c8cf8'];
+  const mondayOf = s => { const d = parse(s); d.setDate(d.getDate() - (d.getDay() + 6) % 7); return iso(d); };
+  const addDays = (s, n) => { const d = parse(s); d.setDate(d.getDate() + n); return iso(d); };
+  function habitIndex() {
+    const m = new Map();
+    S.logs.forEach(l => { if (!l.v) return; if (!m.has(l.h)) m.set(l.h, new Map()); m.get(l.h).set(l.date, l.v); });
+    return m;
+  }
+  const hbStart = h => h.start || iso(new Date(h.createdAt || Date.now()));
+  const hbDaily = h => h.kind === 'avoid' || !(h.perWeek >= 1 && h.perWeek <= 6);
+  const hbDone = (h, v) => h.kind === 'avoid' ? !v : (v || 0) >= (h.target || 1);
+  function hbStreak(h, days, today) {
+    const start = hbStart(h);
+    const ok = d => hbDone(h, days.get(d));
+    if (hbDaily(h)) {
+      let d = today, n = 0;
+      if (h.kind !== 'avoid' && !ok(d)) d = addDays(d, -1); // heute noch offen bricht die Serie nicht
+      while (d >= start && ok(d) && n < 5000) { n++; d = addDays(d, -1); }
+      return { n, unit: n === 1 ? 'Tag' : 'Tage' };
+    }
+    const weekOk = mon => { let c = 0; for (let i = 0; i < 7; i++) if (ok(addDays(mon, i))) c++; return c >= h.perWeek; };
+    let mon = mondayOf(today), n = 0;
+    if (!weekOk(mon)) mon = addDays(mon, -7); // laufende Woche zählt erst, wenn sie erfüllt ist
+    while (addDays(mon, 6) >= start && weekOk(mon) && n < 1000) { n++; mon = addDays(mon, -7); }
+    return { n, unit: n === 1 ? 'Woche' : 'Wochen' };
+  }
+  // Anteil erfüllter Gewohnheiten an einem Tag (Wochen-Gewohnheiten zählen nur mit, wenn sie erledigt wurden)
+  function hbDayShare(habits, idx, date) {
+    let total = 0, done = 0;
+    habits.forEach(h => {
+      if (hbStart(h) > date) return;
+      const ok = hbDone(h, (idx.get(h.id) || new Map()).get(date));
+      if (hbDaily(h)) { total++; if (ok) done++; } else if (ok) { total++; done++; }
+    });
+    return total ? done / total : 0;
+  }
+  const hbProgress = (h, v) => h.kind === 'avoid' ? (h.unit ? `Limit: ${h.target || 0} ${h.unit}` : 'Vermeiden')
+    : `${v || 0}/${h.target || 1}${h.unit ? ' ' + h.unit : ''}`;
+
+  function viewHabits(main) {
+    const habits = S.habits.filter(h => !h.archived);
+    const idx = habitIndex();
+    const today = todayISO();
+    const sel = ui.hbDate > today ? today : ui.hbDate;
+    const strip = Array.from({ length: 28 }, (_, i) => addDays(today, i - 27)).map(d => {
+      const share = hbDayShare(habits, idx, d);
+      const dt = parse(d);
+      return `<button class="hb-day ${d === sel ? 'sel' : ''}" data-act="hb-date" data-date="${d}"><small>${WD[dt.getDay()]}</small><span style="--p:${Math.round(share * 100)}">${dt.getDate()}</span></button>`;
+    }).join('');
+    const rows = habits.filter(h => hbStart(h) <= sel).map(h => {
+      const days = idx.get(h.id) || new Map();
+      const v = days.get(sel) || 0;
+      const done = hbDone(h, v);
+      const st = hbStreak(h, days, today);
+      const extra = !hbDaily(h) && done ? '<i>Extra Tag</i>' : '';
+      const slip = h.kind === 'avoid';
+      return `<div class="hb ${slip ? (v ? 'slip' : 'done') : done ? 'done' : ''}" style="--hc:${esc(h.color || HB_COLORS[0])}" data-act="hb-open" data-id="${esc(h.id)}" tabindex="0">
+        <span class="hb-ico">${esc(h.icon || '✅')}</span>
+        <div class="hb-main"><b>${esc(h.name)}</b><span class="hb-sub"><i>${esc(hbProgress(h, v))}</i>${extra}${h.note ? `<em>${esc(h.note)}</em>` : ''}</span></div>
+        <div class="hb-side">${st.n ? `<small>🔥 ${st.n} ${st.unit}</small>` : '<small>&nbsp;</small>'}
+          <button class="hb-check" data-act="hb-toggle" data-id="${esc(h.id)}" aria-label="${slip ? 'Ausrutscher eintragen' : 'Erledigt'}" aria-pressed="${slip ? !!v : done}">${ms(slip ? 'close' : 'check')}</button></div>
+      </div>`;
+    }).join('');
+    const keepStrip = ui.built === 'habits' ? ($('#hb-strip') || {}).scrollLeft : null;
+    main.innerHTML = `<div class="page wide">
+      <header class="page-head row"><div><h1>${sel === today ? 'Heute' : esc(fmtLong(sel))}</h1><p>Gewohnheiten</p></div>
+        <div class="row-btns">${sel !== today ? '<button class="btn ghost" data-act="hb-today">Heute</button>' : ''}<button class="btn" data-act="hb-new">${ms('add')} Gewohnheit</button></div></header>
+      <div class="hb-strip" id="hb-strip">${strip}</div>
+      ${habits.length ? `<div class="hb-list">${rows || '<p class="hint">An diesem Tag gab es noch keine Gewohnheiten.</p>'}</div>`
+        : empty('task_alt', 'Noch keine Gewohnheiten', 'Lege deine erste Gewohnheit an, zum Beispiel „Wasser trinken“ mit 2500 ml am Tag.')}
+    </div>`;
+    const el = $('#hb-strip');
+    el.scrollLeft = keepStrip != null ? keepStrip : el.scrollWidth;
+    ui.built = 'habits';
+  }
+  function toggleHabit(id) {
+    const h = S.habit(id); if (!h) return;
+    const date = ui.hbDate > todayISO() ? todayISO() : ui.hbDate;
+    const v = S.logValue(id, date);
+    const target = h.target || 1;
+    if (h.kind === 'avoid') return S.setLog(id, date, v ? 0 : 1);
+    if (v >= target) return S.setLog(id, date, 0);
+    S.setLog(id, date, h.step && target > 1 ? Math.min(target, v + h.step) : target);
+  }
+  let hbEdit = null;
+  function openHabit(id) {
+    const h = id ? S.habit(id) : null;
+    hbEdit = id || 'new';
+    const date = ui.hbDate > todayISO() ? todayISO() : ui.hbDate;
+    const d = h || { name: '', icon: '', color: HB_COLORS[S.habits.length % HB_COLORS.length], kind: 'do', target: 1, unit: '', step: '', perWeek: 7, start: todayISO(), remind: '', note: '' };
+    const v = h ? S.logValue(h.id, date) : 0;
+    const o = $('#overlay');
+    o.hidden = false;
+    o.innerHTML = `<div class="sheet" role="dialog" aria-label="Gewohnheit">
+      <header class="sheet-head"><button class="icon-btn" data-act="set-close" aria-label="Zurück">${ms('arrow_back')}</button><b>${h ? esc(h.name) : 'Neue Gewohnheit'}</b></header>
+      <div class="sheet-body">
+        ${h && h.kind !== 'avoid' && (h.target || 1) > 1 ? `<section class="set"><h3>${esc(date === todayISO() ? 'Heute' : fmtLong(date))}</h3>
+          <div class="hb-stepper"><button class="btn ghost" data-act="hb-step" data-d="-1">${ms('remove')}</button>
+            <input id="hb-val" type="number" inputmode="decimal" min="0" value="${v}"><span>von ${h.target} ${esc(h.unit || '')}</span>
+            <button class="btn ghost" data-act="hb-step" data-d="1">${ms('add')}</button><button class="btn" data-act="hb-full">Erledigt</button></div></section>` : ''}
+        <section class="set"><h3>${h ? 'Bearbeiten' : 'Gewohnheit anlegen'}</h3>
+          <form id="hb-form" class="tplform">
+            <div class="hb-f2"><input name="icon" type="text" maxlength="4" placeholder="🙂" value="${esc(d.icon || '')}" aria-label="Symbol (Emoji)"><input name="name" type="text" placeholder="Name, z.B. Wasser trinken" value="${esc(d.name)}" required></div>
+            <div class="hb-colors">${HB_COLORS.map(c => `<label style="--hc:${c}"><input type="radio" name="color" value="${c}" ${c === d.color ? 'checked' : ''}><span></span></label>`).join('')}</div>
+            <label>Art<select name="kind"><option value="do" ${d.kind !== 'avoid' ? 'selected' : ''}>Erreichen (abhaken oder Menge zählen)</option><option value="avoid" ${d.kind === 'avoid' ? 'selected' : ''}>Vermeiden (jeder Tag zählt, außer bei Ausrutscher)</option></select></label>
+            <div class="hb-f3"><label>Ziel<input name="target" type="number" inputmode="decimal" min="0" value="${esc(d.target == null ? 1 : d.target)}"></label>
+              <label>Einheit<input name="unit" type="text" placeholder="ml, min, …" value="${esc(d.unit || '')}"></label>
+              <label>Schritt pro Tipp<input name="step" type="number" inputmode="decimal" min="0" placeholder="z.B. 250" value="${esc(d.step || '')}"></label></div>
+            <div class="hb-f3"><label>Häufigkeit<select name="perWeek">${[7, 6, 5, 4, 3, 2, 1].map(n => `<option value="${n}" ${(+d.perWeek || 7) === n ? 'selected' : ''}>${n === 7 ? 'Täglich' : n + '× pro Woche'}</option>`).join('')}</select></label>
+              <label>Start am<input name="start" type="date" value="${esc(hbStart(d.start ? d : { start: todayISO() }))}"></label>
+              <label>Erinnerung um<input name="remind" type="time" value="${esc(d.remind || '')}"></label></div>
+            <input name="note" type="text" placeholder="Notiz, z.B. Brustdehnung / Nacken dehnen" value="${esc(d.note || '')}">
+            <div class="row-btns">${h ? `<button type="button" class="btn danger ghost" data-act="hb-delete" data-id="${esc(h.id)}">Löschen</button>` : ''}<button class="btn">Speichern</button></div>
+          </form></section>
+      </div></div>`;
+    $('#hb-form').addEventListener('submit', ev => {
+      ev.preventDefault();
+      const f = new FormData(ev.target);
+      const num = k => { const n = parseFloat(String(f.get(k)).replace(',', '.')); return isFinite(n) ? n : 0; };
+      S.saveHabit({ ...(h || { order: Date.now() }), name: String(f.get('name')).trim(), icon: String(f.get('icon')).trim(), color: String(f.get('color') || d.color),
+        kind: String(f.get('kind')), target: f.get('kind') === 'avoid' ? num('target') : Math.max(1, num('target') || 1), unit: String(f.get('unit')).trim(), step: num('step') || 0,
+        perWeek: +f.get('perWeek') || 7, start: String(f.get('start')) || todayISO(), remind: String(f.get('remind') || ''), note: String(f.get('note')).trim() });
+      closeSettings(); toast('Gewohnheit gespeichert');
+    });
+    const val = $('#hb-val');
+    if (val) val.addEventListener('change', () => S.setLog(h.id, date, parseFloat(val.value) || 0));
+  }
+
+  // ---------- Pflege-Check ----------
+  // Prüft die letzten 30 Tage: Tage ohne Eintrag, Einträge ohne Ort (wichtig für den Länderzähler) und offene Gewohnheiten.
+  function careCheck() {
+    const today = todayISO();
+    const have = new Set(), located = new Set();
+    let first = today;
+    S.entries.forEach(e => { if (!e.date) return; have.add(e.date); if (e.date < first) first = e.date; if (e.loc && e.loc.lat != null) located.add(e.date); });
+    const missing = [], noLoc = [];
+    if (have.size) for (let i = 1; i <= 30; i++) {
+      const d = addDays(today, -i);
+      if (d < first) break;
+      if (!have.has(d)) missing.push(d); else if (!located.has(d)) noLoc.push(d);
+    }
+    const idx = habitIndex();
+    const open = S.habits.filter(h => !h.archived && h.kind !== 'avoid' && hbDaily(h) && hbStart(h) <= today && !hbDone(h, (idx.get(h.id) || new Map()).get(today)));
+    const todayMissing = have.size > 0 && !have.has(today);
+    const todayNoLoc = have.has(today) && !located.has(today);
+    const count = missing.length + noLoc.length + (todayMissing || todayNoLoc ? 1 : 0);
+    const level = missing.length + noLoc.length >= 2 ? 'bad' : count || open.length ? 'warn' : 'ok';
+    return { missing, noLoc, open, todayMissing, todayNoLoc, count, level };
+  }
+  function careBanner(c) {
+    if (c.level === 'ok') return '';
+    const bits = [];
+    if (c.missing.length) bits.push(`${c.missing.length} ${c.missing.length === 1 ? 'Tag' : 'Tage'} ohne Eintrag`);
+    if (c.noLoc.length) bits.push(`${c.noLoc.length} ${c.noLoc.length === 1 ? 'Tag' : 'Tage'} ohne Ort`);
+    if (c.todayMissing) bits.push('heute noch kein Eintrag');
+    else if (c.todayNoLoc) bits.push('heute fehlt der Ort');
+    if (c.open.length) bits.push(`${c.open.length} ${c.open.length === 1 ? 'Gewohnheit' : 'Gewohnheiten'} offen`);
+    return `<button class="care ${c.level}" data-act="care-open">${ms('warning')}<span>${c.level === 'bad' ? '<b>Bitte nachpflegen:</b> ' : ''}${esc(bits.join(' · '))}</span>${ms('chevron_right')}</button>`;
+  }
+  function openCare() {
+    const c = careCheck();
+    const o = $('#overlay');
+    o.hidden = false;
+    const row = (d, act, extra) => `<button class="listrow" data-act="${act}" ${extra}>${ms(act === 'new' ? 'add' : 'location_on')}<span>${esc(fmtLong(d))}</span>${ms('chevron_right')}</button>`;
+    const entryOn = d => (byDate(d).find(e => !(e.loc && e.loc.lat != null)) || byDate(d)[0] || {}).id;
+    o.innerHTML = `<div class="sheet" role="dialog" aria-label="Pflege-Check">
+      <header class="sheet-head"><button class="icon-btn" data-act="set-close" aria-label="Zurück">${ms('arrow_back')}</button><b>Pflege-Check</b></header>
+      <div class="sheet-body">
+        <p class="hint">Geprüft werden die letzten 30 Tage. Nur Tage mit Eintrag und Ort zählen im Länderzähler sicher für ein Land.</p>
+        ${c.todayMissing ? `<section class="set"><h3>Heute</h3>${row(todayISO(), 'new', `data-date="${todayISO()}"`)}</section>` : ''}
+        ${c.todayNoLoc ? `<section class="set"><h3>Heute fehlt der Ort</h3>${row(todayISO(), 'open', `data-id="${esc(entryOn(todayISO()))}"`)}</section>` : ''}
+        ${c.missing.length ? `<section class="set"><h3>Tage ohne Eintrag (${c.missing.length})</h3><p class="hint">Tippe auf einen Tag, um den Eintrag nachzutragen. Den Ort suchst du im Eintrag unter „Ort suchen“.</p>${c.missing.map(d => row(d, 'new', `data-date="${d}"`)).join('')}</section>` : ''}
+        ${c.noLoc.length ? `<section class="set"><h3>Einträge ohne Ort (${c.noLoc.length})</h3>${c.noLoc.map(d => row(d, 'open', `data-id="${esc(entryOn(d))}"`)).join('')}</section>` : ''}
+        ${c.open.length ? `<section class="set"><h3>Heute offene Gewohnheiten (${c.open.length})</h3>${c.open.map(h => `<button class="listrow" data-nav="habits"><i class="hb-mini">${esc(h.icon || '✅')}</i><span>${esc(h.name)}</span>${h.remind ? `<small>${esc(h.remind)}</small>` : ''}${ms('chevron_right')}</button>`).join('')}</section>` : ''}
+        ${c.level === 'ok' ? empty('check', 'Alles gepflegt', 'In den letzten 30 Tagen fehlt kein Eintrag und kein Ort.') : ''}
+      </div></div>`;
+  }
+
   // ---------- Ansicht: Tags ----------
   function viewTags(main) {
     const tags = tagCounts();
@@ -479,18 +660,35 @@
   }
 
   // ---------- Rahmen ----------
-  const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags, countries: viewCountries };
+  const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags, countries: viewCountries, habits: viewHabits };
+  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten' };
   function render() {
     $$('#nav [data-nav]').forEach(b => b.setAttribute('aria-current', b.dataset.nav === ui.view ? 'page' : 'false'));
     const isMap = ui.view === 'map';
+    const care = careCheck();
+    $('#app').dataset.view = ui.view;
+    $('#top-title').textContent = TITLES[ui.view] || 'Tagebuch';
+    $('#menu-dot').hidden = care.level === 'ok';
+    $('#menu-dot').dataset.level = care.level;
+    try { if (navigator.setAppBadge) { if (care.count + care.open.length) navigator.setAppBadge(care.count + care.open.length); else navigator.clearAppBadge(); } } catch {}
     $('#main').hidden = isMap;
     if (isMap) { if ($('#mapview').hidden) showMap(); else refreshMap(); }
-    else { $('#mapview').hidden = true; views[ui.view]($('#main')); }
+    else {
+      $('#mapview').hidden = true;
+      const main = $('#main');
+      views[ui.view](main);
+      // Pflege-Hinweis oben in der Ansicht
+      $$('.care', main).forEach(el => el.remove());
+      const page = $('.page', main);
+      if (page) page.insertAdjacentHTML('afterbegin', careBanner(care));
+    }
     const btn = $('#sync-btn');
     btn.dataset.status = S.status;
     btn.title = S.statusText;
   }
   function go(view) {
+    closeMenu();
+    if (!ed && !$('#overlay').hidden) { editTpl = null; $('#overlay').hidden = true; $('#overlay').innerHTML = ''; }
     // „Suche“ ist die Zeitleiste mit Fokus im Suchfeld
     if (view === 'search') { go('timeline'); const q = $('#tl-q'); if (q) q.focus(); return; }
     if (ui.view !== view) { ui.built = null; $('#main').scrollTop = 0; }
@@ -498,6 +696,7 @@
     render();
   }
 
+  function closeMenu() { $('#nav').classList.remove('open'); $('#nav-backdrop').hidden = true; }
   let toastTimer = null;
   function toast(text) {
     const t = $('#toast');
@@ -898,16 +1097,32 @@
   function closeLightbox() { const lb = $('#lightbox'); const v = $('video', lb); if (v) { v.pause(); v.remove(); } lb.hidden = true; }
   const shiftDay = (s, n) => { const d = parse(s); d.setDate(d.getDate() + n); return iso(d); };
   const actions = {
-    new: el => openEditor(null, { date: el.dataset.date }),
+    new: el => { if (!ed && !$('#overlay').hidden) { $('#overlay').hidden = true; $('#overlay').innerHTML = ''; } openEditor(null, { date: el.dataset.date }); },
     open: el => { if (ed && ed.entry.id === el.dataset.id) return; if (ed) commit(); openEditor(el.dataset.id); },
     more: () => { ui.limit += 150; timelineList(); },
     tag: el => { ui.tag = ui.tag === el.dataset.tag ? null : el.dataset.tag; timelineList(); },
-    settings: () => openSettings(),
+    settings: () => { closeMenu(); openSettings(); },
     'set-close': closeSettings,
     'cal-prev': () => { ui.calYear--; render(); },
     'cal-next': () => { ui.calYear++; render(); },
     'cal-today': () => { ui.calYear = new Date().getFullYear(); ui.builtYear = null; render(); },
     'cal-day': el => openDay(el.dataset.date),
+    menu: () => { $('#nav').classList.add('open'); $('#nav-backdrop').hidden = false; },
+    'menu-close': closeMenu,
+    'care-open': openCare,
+    'hb-date': el => { ui.hbDate = el.dataset.date; render(); },
+    'hb-today': () => { ui.hbDate = todayISO(); ui.built = null; render(); },
+    'hb-toggle': el => toggleHabit(el.dataset.id),
+    'hb-open': el => openHabit(el.dataset.id),
+    'hb-new': () => openHabit(null),
+    'hb-delete': el => { if (!confirm('Diese Gewohnheit löschen? Die bisherigen Tageswerte bleiben gespeichert.')) return; S.deleteHabit(el.dataset.id); closeSettings(); },
+    'hb-step': el => {
+      const h = S.habit(hbEdit); if (!h) return;
+      const date = ui.hbDate > todayISO() ? todayISO() : ui.hbDate;
+      const v = Math.max(0, S.logValue(h.id, date) + (+el.dataset.d) * (h.step || 1));
+      S.setLog(h.id, date, v); $('#hb-val').value = v;
+    },
+    'hb-full': () => { const h = S.habit(hbEdit); if (!h) return; S.setLog(h.id, ui.hbDate > todayISO() ? todayISO() : ui.hbDate, h.target || 1); closeSettings(); },
     'ct-year': el => { ui.ctYear = el.dataset.year; render(); },
     'att-more': () => { ui.attLimit += 300; render(); },
     'tag-go': el => { ui.tag = el.dataset.tag; ui.q = ''; go('timeline'); },
