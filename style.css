@@ -485,3 +485,6 @@ img.missing { opacity: .35; }
 .life-grid i.past { background: var(--accent); }
 .life-grid i.now { background: transparent; box-shadow: inset 0 0 0 2px var(--accent); }
 .life-set { margin-top: 22px; }
+.bk-cost { margin-top: 14px; }
+.bk-cost b { font-size: 21px; }
+.bk small.bk-note { color: var(--ink-3); }

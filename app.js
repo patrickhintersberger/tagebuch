@@ -601,7 +601,10 @@
     return 2 * R * Math.asin(Math.sqrt(h));
   };
   const lastPlace = () => { const e = sorted().find(x => x.loc && x.loc.lat != null); return e ? e.loc : null; };
-  const bkSub = b => [b.cat, b.loc && b.loc.name, b.ageTo ? `bis ${b.ageTo} Jahre` : '', (b.months || []).length ? (b.months || []).map(m => MONTHS[m]).join(', ') : '', b.plan ? 'geplant ' + parse(b.plan + '-01').toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }) : ''].filter(Boolean).join(' · ');
+  const eur = n => Math.round(n).toLocaleString('de-DE') + ' €';
+  // Kosten des Erlebnisses vor Ort (ohne Anreise): einmalig oder pro Tag
+  const bkCost = b => b.cost ? `ca. ${eur(b.cost)}${b.costPer === 'day' ? ' pro Tag' : ''}` : b.cost === 0 ? 'kostenlos' : '';
+  const bkSub = b => [bkCost(b), b.cat, b.loc && b.loc.name, b.ageTo ? `bis ${b.ageTo} Jahre` : '', (b.months || []).length ? (b.months || []).map(m => MONTHS[m]).join(', ') : '', b.plan ? 'geplant ' + parse(b.plan + '-01').toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }) : ''].filter(Boolean).join(' · ');
 
   // Vorschläge mit Begründung, wichtigste zuerst
   function bucketSuggestions(max = 5) {
@@ -624,7 +627,7 @@
   function bkRow(b) {
     return `<div class="bk ${b.done ? 'done' : ''}" data-act="bk-open" data-id="${esc(b.id)}" tabindex="0">
       <button class="hb-check" data-act="bk-toggle" data-id="${esc(b.id)}" aria-pressed="${!!b.done}" aria-label="Erledigt">${ms('check')}</button>
-      <div><b>${esc(b.title)}</b>${bkSub(b) ? `<small>${esc(bkSub(b))}</small>` : ''}</div></div>`;
+      <div><b>${esc(b.title)}</b>${bkSub(b) ? `<small>${esc(bkSub(b))}</small>` : ''}${b.costNote ? `<small class="bk-note">${esc(b.costNote)}</small>` : ''}</div></div>`;
   }
   function viewBucket(main) {
     const all = S.bucket;
@@ -636,6 +639,11 @@
     const groups = new Map();
     list.sort((x, y) => (x.ageTo || 999) - (y.ageTo || 999) || (x.createdAt || 0) - (y.createdAt || 0)).forEach(b => { const k = phase(b); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(b); });
     const sug = ui.bkFilter === 'open' ? bucketSuggestions(4) : [];
+    // Summe der offenen einmaligen Erlebnisse; Tagesbudgets und Anschaffungen laufen getrennt
+    const buy = b => b.cat === 'Sonstiges' || b.cat === 'Beruf';
+    const sumOnce = open.filter(b => b.cost && b.costPer !== 'day' && !buy(b)).reduce((n, b) => n + b.cost, 0);
+    const sumBuy = open.filter(b => b.cost && buy(b)).reduce((n, b) => n + b.cost, 0);
+    const noCost = open.filter(b => b.cost == null).length;
     main.innerHTML = `<div class="page">
       <header class="page-head row"><div><h1>Bucket-Liste</h1><p>${open.length} offen · ${done.length} erledigt${age != null ? ` · du bist ${age}` : ''}</p></div>
         <div class="row-btns"><button class="btn" data-act="bk-new">${ms('add')} Ziel</button></div></header>
@@ -644,6 +652,8 @@
       ${sug.length ? `<section class="memory"><header>${ms('star')}<div><b>Vorschläge für jetzt</b><span>Für deine Wochen- und Monatsplanung</span></div></header>
         ${sug.map(({ b, reason }) => `<div class="bk sug" data-act="bk-open" data-id="${esc(b.id)}" tabindex="0"><div><em>${esc(reason)}</em><b>${esc(b.title)}</b>${bkSub(b) ? `<small>${esc(bkSub(b))}</small>` : ''}</div>
           <button class="btn small ghost" data-act="bk-plan" data-id="${esc(b.id)}">Diesen Monat</button></div>`).join('')}</section>` : ''}
+      ${sumOnce || sumBuy ? `<div class="ct-tiles bk-cost"><div><b>${eur(sumOnce)}</b><span>offene Erlebnisse vor Ort</span></div><div><b>${eur(sumBuy)}</b><span>offene Anschaffungen</span></div><div><b>${noCost}</b><span>Ziele ohne Kostenangabe</span></div></div>
+        <p class="hint">Geschätzte Kosten des Erlebnisses vor Ort, ohne Anreise. Reiseziele stehen als Tagesbudget in der Zeile und sind in der Summe nicht enthalten.</p>` : ''}
       <div class="chips">${[['open', 'Offen'], ['done', 'Erledigt'], ['all', 'Alle']].map(([k, n]) => `<button class="chip" data-act="bk-filter" data-f="${k}" aria-pressed="${ui.bkFilter === k}">${n}</button>`).join('')}</div>
       ${all.length ? [...groups.entries()].map(([k, items]) => `<h2 class="ct-h">${esc(k)}</h2><div class="list">${items.map(bkRow).join('')}</div>`).join('') || '<p class="hint">Hier ist nichts.</p>'
         : empty('flag', 'Noch keine Ziele', 'Trage ein, was du in deinem Leben noch machen willst. Mit „+ Ziel“ gehen auch mehrere Zeilen auf einmal.')}
@@ -675,6 +685,9 @@
           <div id="bk-loc"></div>
           <div class="hb-f3"><label>Geplant für<input name="plan" type="month" value="${esc(d.plan || '')}"></label>
             ${b ? `<label>Erledigt am<input name="done" type="date" value="${esc(d.done || '')}"></label>` : ''}</div>
+          <div class="hb-f3"><label>Kosten vor Ort (€)<input name="cost" type="number" inputmode="decimal" min="0" value="${esc(d.cost == null ? '' : d.cost)}" placeholder="ohne Anreise"></label>
+            <label>Gilt<select name="costPer"><option value="" ${d.costPer !== 'day' ? 'selected' : ''}>einmalig</option><option value="day" ${d.costPer === 'day' ? 'selected' : ''}>pro Tag</option></select></label></div>
+          <input name="costNote" type="text" value="${esc(d.costNote || '')}" placeholder="Wofür genau, z.B. Tandemsprung pro Person">
           <textarea name="note" rows="3" placeholder="Notiz: mit wem, was es braucht, warum es dir wichtig ist">${esc(d.note || '')}</textarea>
           <div class="row-btns">${b ? `<button type="button" class="btn danger ghost" data-act="bk-delete" data-id="${esc(b.id)}">Löschen</button>` : ''}<button class="btn">Speichern</button></div>
         </form></section></div></div>`;
@@ -684,7 +697,8 @@
       ev.preventDefault();
       const f = new FormData(ev.target);
       const int = k => { const n = parseInt(f.get(k), 10); return isFinite(n) && n > 0 ? n : null; };
-      const base = { cat: String(f.get('cat')), ageFrom: int('ageFrom'), ageTo: int('ageTo'), months: f.getAll('months').map(Number), plan: String(f.get('plan') || ''), note: String(f.get('note')).trim(), loc: bkLoc };
+      const base = { cat: String(f.get('cat')), ageFrom: int('ageFrom'), ageTo: int('ageTo'), months: f.getAll('months').map(Number), plan: String(f.get('plan') || ''), note: String(f.get('note')).trim(), loc: bkLoc,
+        cost: String(f.get('cost')).trim() === '' ? null : Math.max(0, parseFloat(String(f.get('cost')).replace(',', '.')) || 0), costPer: String(f.get('costPer') || ''), costNote: String(f.get('costNote')).trim() };
       if (b) S.saveBucket({ ...b, ...base, title: String(f.get('title')).trim(), done: String(f.get('done') || '') });
       else String(f.get('title')).split('\n').map(t => t.replace(/^[-*•\d.)\s]+/, '').trim()).filter(Boolean).forEach((title, i) => S.saveBucket({ ...base, title, done: '', createdAt: Date.now() + i }));
       closeSettings(); toast('Gespeichert');
@@ -1389,7 +1403,7 @@
       $('#ed-tplmenu').hidden = true;
       const sug = bucketSuggestions(5);
       if (!sug.length) return toast('Deine Bucket-Liste hat keine offenen Ziele.');
-      insertTemplate({ name: '', tags: [], body: '## Bucket-Liste: Vorschläge\n' + sug.map(({ b, reason }) => `- ${b.title} (${reason})`).join('\n') + '\n' });
+      insertTemplate({ name: '', tags: [], body: '## Bucket-Liste: Vorschläge\n' + sug.map(({ b, reason }) => `- ${b.title} (${reason}${bkCost(b) ? ', ' + bkCost(b) : ''})`).join('\n') + '\n' });
     },
     'push-on': pushOn,
     'push-off': pushOff,
