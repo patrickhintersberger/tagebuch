@@ -751,6 +751,14 @@
     $('#ed-date').addEventListener('change', () => { readInputs(); edHead(); edMemory(); scheduleCommit(); });
     $('#ed-file').addEventListener('change', ev => { addPhotos([...ev.target.files]); ev.target.value = ''; });
     if (ed.isNew && autoLoc() && e.date === todayISO()) locate(true);
+    // Ort ohne Namen (z.B. offline gespeichert): Namen jetzt nachschlagen
+    if (e.loc && e.loc.lat != null && !e.loc.name) {
+      const cur = ed, { lat, lng } = e.loc;
+      reverse(lat, lng).then(n => {
+        if (ed !== cur || !n || !cur.entry.loc || cur.entry.loc.lat !== lat || cur.entry.loc.name) return;
+        cur.entry.loc.name = n; edLoc(); scheduleCommit();
+      });
+    }
     if (ed.isNew && !('ontouchstart' in window)) $('#ed-text').focus();
   }
   function grow() { const t = $('#ed-text'); if (!t) return; t.style.height = 'auto'; t.style.height = Math.max(180, t.scrollHeight + 4) + 'px'; }
@@ -812,7 +820,7 @@
   function edLoc() {
     const l = ed.entry.loc;
     $('#ed-loc').innerHTML = (l ? `<div class="locbox">
-        <input id="ed-loc-name" type="text" value="${esc(l.name || '')}" placeholder="Name des Ortes" autocomplete="off">
+        <input id="ed-loc-name" type="text" value="${esc(l.name || '')}" placeholder="Ort wird ermittelt …" autocomplete="off">
         <small>${l.lat.toFixed(5)}, ${l.lng.toFixed(5)}</small>
         <button class="icon-btn" data-act="ed-loc-clear" aria-label="Ort entfernen">${ms('close')}</button></div>` : '') +
       `<div class="locrow"><button class="btn ghost" data-act="ed-locate">${ms('my_location')} ${l ? 'Standort aktualisieren' : 'Aktueller Standort'}</button>
