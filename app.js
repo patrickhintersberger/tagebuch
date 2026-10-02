@@ -708,6 +708,64 @@
     });
   }
 
+  // ---------- Ansicht: Lebenszeit ----------
+  // Wie viel Zeit bleibt bis zum gewählten Alter, und wie viele Sommer, Winter und Weihnachten sind das noch.
+  function viewLife(main) {
+    const prof = bkProfile();
+    const goal = prof.lifeAge || 88;
+    if (!prof.birth) {
+      main.innerHTML = `<div class="page"><header class="page-head"><h1>Lebenszeit</h1></header>
+        <section class="set"><h3>Geburtsdatum</h3><p class="hint">Damit die App ausrechnen kann, wie viel Zeit bis zu deinem Zielalter bleibt.</p>
+        <form id="life-form" class="hb-stepper"><input type="date" name="birth" required style="width:auto"><button class="btn">Speichern</button></form></section></div>`;
+      $('#life-form').addEventListener('submit', ev => { ev.preventDefault(); S.saveBucket({ ...prof, id: '_profile', birth: new FormData(ev.target).get('birth') }); });
+      ui.built = 'life'; return;
+    }
+    const birth = parse(prof.birth);
+    const now = new Date(); now.setHours(0, 0, 0, 0);
+    const end = new Date(birth.getFullYear() + goal, birth.getMonth(), birth.getDate());
+    const left = end > now;
+    // Jahre, Monate, Tage bis zum Zieltag
+    let y = end.getFullYear() - now.getFullYear(), m = end.getMonth() - now.getMonth(), d = end.getDate() - now.getDate();
+    if (d < 0) { m--; d += new Date(end.getFullYear(), end.getMonth(), 0).getDate(); }
+    if (m < 0) { y--; m += 12; }
+    const days = Math.max(0, Math.round((end - now) / 864e5));
+    const lived = Math.round((now - birth) / 864e5);
+    const share = Math.min(100, lived / (lived + days) * 100);
+    // Wie oft kommt ein Datum (Monat, Tag) noch zwischen heute und dem Zieltag?
+    const times = (mon, day) => { let n = 0; for (let yy = now.getFullYear(); yy <= end.getFullYear(); yy++) { const t = new Date(yy, mon, day); if (t >= now && t <= end) n++; } return n; };
+    // Eine Jahreszeit zählt, wenn sie noch nicht vorbei ist und vor dem Zieltag beginnt
+    const seasons = (startMon, endMon) => { let n = 0; for (let yy = now.getFullYear() - 1; yy <= end.getFullYear(); yy++) { const a = new Date(yy, startMon, 1), b = new Date(yy + (endMon < startMon ? 1 : 0), endMon + 1, 0); if (b >= now && a <= end) n++; } return n; };
+    const age = bkAge();
+    const tiles = left ? [
+      ['☀️', seasons(5, 7), 'Sommer'], ['🍂', seasons(8, 10), 'Herbste'], ['❄️', seasons(11, 1), 'Winter'], ['🌷', seasons(2, 4), 'Frühlinge'],
+      ['🎄', times(11, 24), 'Weihnachten'], ['🎆', times(11, 31), 'Silvester'], ['🎂', times(birth.getMonth(), birth.getDate()), 'Geburtstage'], ['🗓️', Math.floor(days / 7), 'Wochenenden'],
+    ] : [];
+    const open = S.bucket.filter(b => !b.done).length;
+    main.innerHTML = `<div class="page">
+      <header class="page-head"><h1>Lebenszeit</h1><p>Du bist ${age}. Gerechnet wird bis ${goal}.</p></header>
+      ${left ? `<section class="life-count"><div><b>${y}</b><span>${y === 1 ? 'Jahr' : 'Jahre'}</span></div><div><b>${m}</b><span>${m === 1 ? 'Monat' : 'Monate'}</span></div><div><b>${d}</b><span>${d === 1 ? 'Tag' : 'Tage'}</span></div></section>
+        <p class="life-days">Das sind noch <b>${days.toLocaleString('de-DE')}</b> Tage, bis zum ${end.toLocaleDateString('de-DE', { day: 'numeric', month: 'long', year: 'numeric' })}.</p>
+        <div class="life-bar" role="img" aria-label="${Math.round(share)} Prozent der Zeit bis ${goal} sind vorbei"><i style="width:${share}%"></i></div>
+        <p class="hint">${share.toFixed(1).replace('.', ',')} % der Zeit bis ${goal} sind vorbei.</p>
+        <h2 class="ct-h">Was noch vor dir liegt</h2>
+        <div class="life-tiles">${tiles.map(([ico, n, label]) => `<div><i>${ico}</i><b>${n.toLocaleString('de-DE')}</b><span>${label}</span></div>`).join('')}</div>
+        <h2 class="ct-h">Deine Jahre</h2>
+        <div class="life-grid" role="img" aria-label="${age} von ${goal} Jahren gelebt">${Array.from({ length: goal }, (_, i) => `<i class="${i < age ? 'past' : i === age ? 'now' : ''}" title="${i + 1}. Lebensjahr"></i>`).join('')}</div>
+        <p class="hint">Jedes Kästchen ist ein Lebensjahr: gefüllt sind die gelebten, umrandet ist das laufende.</p>`
+        : `<p class="hint">Dein Zielalter von ${goal} ist erreicht. Stell es unten höher.</p>`}
+      ${open ? `<button class="btn wide" data-nav="bucket">${ms('flag')} ${open} offene Ziele auf der Bucket-Liste</button>` : ''}
+      <section class="set life-set"><h3>Einstellung</h3>
+        <form id="life-form" class="hb-f3 tplform"><label>Geburtsdatum<input type="date" name="birth" value="${esc(prof.birth)}" required></label>
+          <label>Rechnen bis Alter<input type="number" name="lifeAge" min="1" max="130" value="${goal}" required></label><label>&nbsp;<button class="btn">Speichern</button></label></form></section>
+    </div>`;
+    $('#life-form').addEventListener('submit', ev => {
+      ev.preventDefault();
+      const f = new FormData(ev.target);
+      S.saveBucket({ ...prof, id: '_profile', birth: f.get('birth'), lifeAge: Math.max(1, parseInt(f.get('lifeAge'), 10) || 88) });
+    });
+    ui.built = 'life';
+  }
+
   // ---------- Ansicht: Tags ----------
   function viewTags(main) {
     const tags = tagCounts();
@@ -786,8 +844,8 @@
   }
 
   // ---------- Rahmen ----------
-  const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags, countries: viewCountries, habits: viewHabits, bucket: viewBucket };
-  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', travel: 'Reisekarte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten', bucket: 'Bucket-Liste' };
+  const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags, countries: viewCountries, habits: viewHabits, bucket: viewBucket, life: viewLife };
+  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', travel: 'Reisekarte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten', bucket: 'Bucket-Liste', life: 'Lebenszeit' };
   function render() {
     $$('#nav [data-nav]').forEach(b => b.setAttribute('aria-current', b.dataset.nav === ui.view ? 'page' : 'false'));
     const isMap = ui.view === 'map';
