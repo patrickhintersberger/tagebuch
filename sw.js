@@ -1,6 +1,6 @@
 // Macht die App offline nutzbar: eigene Dateien zuerst aus dem Netz (damit Updates sofort ankommen),
 // sonst aus dem Zwischenspeicher. Bibliotheken und Schriften kommen direkt aus dem Zwischenspeicher.
-const CACHE = 'tagebuch-v6';
+const CACHE = 'tagebuch-v7';
 const LIBS = ['cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
 self.addEventListener('install', () => self.skipWaiting());
@@ -30,5 +30,26 @@ self.addEventListener('fetch', e => {
       if (hit) return hit;
       throw err;
     }
+  })());
+});
+
+// Tägliche Erinnerung: Die Nachricht kommt verschlüsselt vom Zeitplan im Daten-Repo.
+self.addEventListener('push', e => {
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch { data = { body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(data.title || 'Daily', {
+    body: data.body || 'Es ist noch etwas offen.',
+    tag: data.tag || 'daily-erinnerung',
+    icon: 'icon-512.png',
+    badge: 'icon-180.png',
+    data: { url: data.url || './' },
+  }));
+});
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of all) if ('focus' in c) return c.focus();
+    return self.clients.openWindow(e.notification.data && e.notification.data.url || './');
   })());
 });

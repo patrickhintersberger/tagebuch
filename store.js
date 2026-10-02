@@ -12,6 +12,7 @@
     templates: {},  // id -> Vorlage
     habits: {},     // id -> Gewohnheit
     logs: {},       // id (Gewohnheit_Datum) -> Tageswert einer Gewohnheit
+    push: {},       // id -> Gerät, das die tägliche Erinnerung bekommt (Push-Abo)
     pending: [],    // Bild-IDs, die noch hochgeladen werden müssen
     pendingThumbs: [], // nur das Vorschaubild muss noch hochgeladen werden (nachträglich erzeugt)
     shas: {},       // Dateischlüssel ('2026', 'templates') -> zuletzt bekannter Stand im Repo
@@ -68,6 +69,7 @@
       store.templates = s.templates || {};
       store.habits = s.habits || {};
       store.logs = s.logs || {};
+      store.push = s.push || {};
       store.pending = s.pending || [];
       store.pendingThumbs = s.pendingThumbs || [];
       store.shas = s.shas || {};
@@ -79,7 +81,7 @@
     });
   }
   function saveLocal() {
-    return idbSet('kv', 'state', { entries: store.entries, templates: store.templates, habits: store.habits, logs: store.logs, pending: store.pending, pendingThumbs: store.pendingThumbs, shas: store.shas, dirty: store.dirty });
+    return idbSet('kv', 'state', { entries: store.entries, templates: store.templates, habits: store.habits, logs: store.logs, push: store.push, pending: store.pending, pendingThumbs: store.pendingThumbs, shas: store.shas, dirty: store.dirty });
   }
 
   let saveTimer = null;
@@ -144,14 +146,14 @@
   // ---------- Aufteilung in Dateien ----------
   const yearOf = e => (e.date || '0000').slice(0, 4);
   // Dateischlüssel -> Sammlung: 'templates', 'habits', '2026' (Einträge), 'h2026' (Gewohnheits-Tageswerte)
-  const collOf = key => key === 'templates' || key === 'habits' ? key : key[0] === 'h' ? 'logs' : 'entries';
+  const collOf = key => key === 'templates' || key === 'habits' || key === 'push' ? key : key[0] === 'h' ? 'logs' : 'entries';
   function bucket(key) {
     const c = collOf(key);
-    if (c === 'templates' || c === 'habits') return Object.values(store[c]);
+    if (c === 'templates' || c === 'habits' || c === 'push') return Object.values(store[c]);
     if (c === 'logs') return Object.values(store.logs).filter(l => 'h' + yearOf(l) === key);
     return Object.values(store.entries).filter(e => yearOf(e) === key);
   }
-  function bucketKeys() { return [...new Set(['templates', 'habits', ...Object.values(store.entries).map(yearOf), ...Object.values(store.logs).map(l => 'h' + yearOf(l))])]; }
+  function bucketKeys() { return [...new Set(['templates', 'habits', 'push', ...Object.values(store.entries).map(yearOf), ...Object.values(store.logs).map(l => 'h' + yearOf(l))])]; }
   function fileBody(key) {
     const c = collOf(key);
     const items = c === 'entries' ? bucket(key).sort(byWhen) : bucket(key).sort((x, y) => String(x.name || x.id).localeCompare(String(y.name || y.id)));
@@ -202,7 +204,7 @@
     if (!res.ok) throw new Error(`GitHub antwortet mit Fehler ${res.status}.`);
     const list = await res.json();
     const out = {};
-    (Array.isArray(list) ? list : []).forEach(f => { const m = /^(templates|habits|h?\d{4})\.json$/.exec(f.name); if (m) out[m[1]] = f.sha; });
+    (Array.isArray(list) ? list : []).forEach(f => { const m = /^(templates|habits|push|h?\d{4})\.json$/.exec(f.name); if (m) out[m[1]] = f.sha; });
     return out;
   }
 
@@ -550,6 +552,17 @@
     setLog(hid, date, v) {
       store.logs[hid + '_' + date] = { id: hid + '_' + date, h: hid, date, v: Math.max(0, +v || 0), updatedAt: Date.now() };
       markDirty('h' + date.slice(0, 4));
+      emit(); schedulePush();
+    },
+    get pushSubs() { return Object.values(store.push).filter(p => !p.deleted); },
+    savePushSub(item) {
+      store.push[item.id] = { ...item, updatedAt: Date.now() };
+      markDirty('push');
+      emit(); schedulePush();
+    },
+    deletePushSub(id) {
+      store.push[id] = { id, deleted: true, updatedAt: Date.now() };
+      markDirty('push');
       emit(); schedulePush();
     },
     deleteTemplate(id) {

@@ -1045,6 +1045,11 @@
           <label class="switch"><input type="checkbox" id="set-autoloc" ${autoLoc() ? 'checked' : ''}><span>Bei neuen Einträgen automatisch den aktuellen Standort speichern</span></label>
         </section>
 
+        <section class="set"><h3>Tägliche Erinnerung</h3>
+          <p class="hint">Jeden Tag gegen 17 Uhr deutscher Zeit bekommst du eine Mitteilung, wenn der Tagebucheintrag, der Ort oder Gewohnheiten noch offen sind. Ist alles erledigt, kommt keine.</p>
+          <div id="push-box"><p class="hint">Prüfe …</p></div>
+        </section>
+
         <section class="set"><h3>Synchronisation</h3>
           <p class="status" data-status="${esc(S.status)}"><i class="sync-dot"></i>${esc(S.statusText || 'Nur auf diesem Gerät gespeichert')}${S.pendingPhotos ? ` · ${S.pendingPhotos} Bild(er) warten auf Upload` : ''}</p>
           ${S.hasToken() ? `<p class="hint">Verbunden mit <b>${esc(S.repo())}</b>.</p>
@@ -1069,6 +1074,7 @@
           <p class="hint">Der Export enthält alle Texte, Tags, Bewertungen und Orte als JSON-Datei. Bilder liegen im Daten-Repo. Einen Diarium-Export (JSON) kannst du hier direkt einlesen. Für die Bilder in Diarium mit „Eigene Dateien für Anhänge erstellen“ exportieren, die ZIP entpacken und den Ordner wählen (am Computer). Mehrfaches Einlesen erzeugt keine doppelten Einträge oder Bilder.</p>
         </section>
       </div></div>`;
+    pushBox();
     $('#set-autoloc').addEventListener('change', e => lsSet('tb-autoloc', e.target.checked ? '1' : '0'));
     $$('.tplform[data-id]', o).forEach(f => f.addEventListener('submit', ev => {
       ev.preventDefault();
@@ -1109,6 +1115,51 @@
       catch { toast('Diese Datei konnte nicht gelesen werden.'); }
     });
   }
+  // ---------- Tägliche Erinnerung (Web Push) ----------
+  const pushId = endpoint => { let h = 5381; for (let i = 0; i < endpoint.length; i++) h = ((h << 5) + h + endpoint.charCodeAt(i)) >>> 0; return 'p' + h.toString(36) + endpoint.length.toString(36); };
+  const b64urlBytes = str => Uint8Array.from(atob(str.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - str.length % 4) % 4)), ch => ch.charCodeAt(0));
+  const deviceLabel = () => /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android' : /Mac/.test(navigator.userAgent) ? 'Mac' : 'Gerät';
+  async function currentPushSub() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
+    const reg = await navigator.serviceWorker.getRegistration();
+    return reg ? reg.pushManager.getSubscription() : null;
+  }
+  async function pushBox() {
+    const box = $('#push-box'); if (!box) return;
+    const ios = /iPhone|iPad/.test(navigator.userAgent);
+    let html;
+    if (location.protocol !== 'https:') html = '<p class="hint">Mitteilungen gibt es nur in der Online-Version der App.</p>';
+    else if (!('PushManager' in window) || !('Notification' in window)) html = `<p class="hint">${ios ? 'Auf dem iPhone gehen Mitteilungen nur in der installierten App: in Safari auf Teilen → „Zum Home-Bildschirm“, die App von dort öffnen und hier einschalten.' : 'Dieser Browser unterstützt keine Mitteilungen.'}</p>`;
+    else if (!S.hasToken()) html = '<p class="hint">Verbinde die App zuerst unten mit GitHub. Die Erinnerung liest deine Daten von dort.</p>';
+    else {
+      const sub = await currentPushSub().catch(() => null);
+      const known = sub && S.pushSubs.some(p => p.id === pushId(sub.endpoint));
+      const others = S.pushSubs.filter(p => !sub || p.id !== pushId(sub.endpoint)).map(p => p.device).filter(Boolean);
+      html = (known ? `<p class="status" data-status="ok"><i class="sync-dot"></i>Auf diesem Gerät eingeschaltet</p><div class="row-btns left"><button class="btn ghost danger" data-act="push-off">Auf diesem Gerät ausschalten</button></div>`
+        : `<div class="row-btns left"><button class="btn" data-act="push-on">Erinnerung auf diesem Gerät einschalten</button></div>${Notification.permission === 'denied' ? '<p class="hint">Mitteilungen sind für diese App blockiert. Bitte in den Geräte-Einstellungen wieder erlauben.</p>' : ''}`)
+        + (others.length ? `<p class="hint">Außerdem eingeschaltet auf: ${esc(others.join(', '))}.</p>` : '');
+    }
+    if ($('#push-box')) $('#push-box').innerHTML = html;
+  }
+  async function pushOn() {
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') { toast('Mitteilungen wurden nicht erlaubt.'); return pushBox(); }
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlBytes(window.TB_CONFIG.vapidPublicKey) });
+      S.savePushSub({ id: pushId(sub.endpoint), sub: sub.toJSON(), device: deviceLabel(), createdAt: Date.now() });
+      await S.sync();
+      reg.showNotification('Daily', { body: 'Die tägliche Erinnerung ist eingeschaltet.', icon: 'icon-512.png', tag: 'daily-erinnerung' }).catch(() => {});
+      toast('Erinnerung eingeschaltet');
+    } catch (err) { toast('Einschalten fehlgeschlagen: ' + (err && err.message || err)); }
+    pushBox();
+  }
+  async function pushOff() {
+    const sub = await currentPushSub().catch(() => null);
+    if (sub) { S.deletePushSub(pushId(sub.endpoint)); await sub.unsubscribe().catch(() => {}); S.sync(); }
+    pushBox();
+  }
+
   const settingsOpen = () => !ed && !$('#overlay').hidden;
   function closeSettings() { editTpl = null; $('#overlay').hidden = true; $('#overlay').innerHTML = ''; ui.built = null; render(); }
 
@@ -1142,6 +1193,8 @@
       S.setLog(h.id, date, v); $('#hb-val').value = v;
     },
     'hb-full': () => { const h = S.habit(hbEdit); if (!h) return; S.setLog(h.id, ui.hbDate > todayISO() ? todayISO() : ui.hbDate, h.target || 1); closeSettings(); },
+    'push-on': pushOn,
+    'push-off': pushOff,
     'ct-year': el => { ui.ctYear = el.dataset.year; render(); },
     'att-more': () => { ui.attLimit += 300; render(); },
     'tag-go': el => { ui.tag = el.dataset.tag; ui.q = ''; go('timeline'); },

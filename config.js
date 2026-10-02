@@ -7,6 +7,8 @@ window.TB_CONFIG = {
   photoMax: 1600,   // längste Kante der gespeicherten Bilder in Pixeln
   thumbMax: 320,    // längste Kante der Vorschaubilder
   videoUploadMax: 50 * 1024 * 1024, // größere Videos werden nicht ins Repo geladen (GitHub-Grenze)
+  // Öffentlicher Schlüssel für die tägliche Erinnerung (Web Push). Der geheime Teil liegt als Secret im Daten-Repo.
+  vapidPublicKey: 'BBOC2Vj57CHd3gjoweGKXm_dk7EhqeftLMuzCYzrsD39d9PsTK01NX9xQUxpTJPE6n2qF5zS9KKBMoa2fO2Msps',
 };
 
 // Vorlagen, die beim ersten Start angelegt werden. Danach in der App unter Einstellungen → Vorlagen änderbar.
