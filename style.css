@@ -321,3 +321,40 @@ img.missing { opacity: .35; }
 /* Leaflet setzt für Bilder in Markern eigene Breiten; hier bewusst überschreiben */
 .leaflet-container .leaflet-marker-pane .pin img { width: 100% !important; height: 100% !important; max-width: 100% !important; }
 .cal-head { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
+
+/* ================= Länderzähler ================= */
+.ct-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 8px 0 14px; }
+.ct-tiles div { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 14px; }
+.ct-tiles b { display: block; font-size: 26px; line-height: 1.2; }
+.ct-tiles span { color: var(--ink-2); font-size: 13px; }
+.ct-chart { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 16px 12px; }
+.ct-chart h2, .ct-h { font-size: 17px; margin: 0 0 8px; }
+.ct-h { margin: 24px 2px 8px; }
+.ct-row summary { display: grid; grid-template-columns: minmax(110px, 190px) 1fr 76px; align-items: center; gap: 12px; min-height: 40px; cursor: pointer; list-style: none; }
+.ct-row summary::-webkit-details-marker { display: none; }
+.ct-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.ct-name i, .ct-table i { font-style: normal; margin-right: 8px; }
+.ct-bar { position: relative; height: 18px; display: flex; background: var(--surface-2); border-radius: 4px; }
+.ct-bar b { height: 100%; background: var(--accent); }
+.ct-bar b:first-child { border-radius: 4px 0 0 4px; }
+.ct-bar b.est { background: color-mix(in srgb, var(--accent) 40%, var(--surface-2)); border-radius: 0 4px 4px 0; }
+.ct-bar u { position: absolute; top: -4px; bottom: -4px; width: 0; border-left: 2px dashed var(--ink-3); }
+.ct-val { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ct-val small { font-weight: 400; color: var(--ink-3); font-size: 12px; }
+.ct-val.over, .ct-table td.over { color: var(--danger); font-weight: 700; }
+.ct-stays { padding: 2px 0 12px; display: flex; flex-wrap: wrap; gap: 6px; }
+.ct-stays p { flex: 1 0 100%; color: var(--ink-2); font-size: 13px; margin-bottom: 2px; }
+.ct-stays span { background: var(--surface-2); border-radius: 8px; padding: 3px 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.ct-stays small { color: var(--ink-3); }
+.ct-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--ink-2); font-size: 12.5px; margin-top: 10px; }
+.ct-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; background: var(--accent); margin-right: -8px; }
+.ct-legend i.est { background: color-mix(in srgb, var(--accent) 40%, var(--surface-2)); }
+.ct-legend u { display: inline-block; height: 14px; border-left: 2px dashed var(--ink-3); margin-right: -8px; }
+.ct-table { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); overflow-x: auto; }
+.ct-table table { width: 100%; border-collapse: collapse; font-size: 14.5px; font-variant-numeric: tabular-nums; }
+.ct-table th, .ct-table td { padding: 9px 12px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+.ct-table th { font-size: 12.5px; color: var(--ink-3); font-weight: 600; }
+.ct-table th:first-child, .ct-table td:first-child { text-align: left; position: sticky; left: 0; background: var(--surface); }
+.ct-table tr:last-child td { border-bottom: 0; }
+.ct-table tr.muted td { color: var(--ink-3); }
+@media (max-width: 520px) { .ct-row summary { grid-template-columns: 104px 1fr 64px; gap: 8px; } }

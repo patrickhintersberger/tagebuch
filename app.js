@@ -28,6 +28,7 @@
     calYear: new Date().getFullYear(),
     builtYear: null,
     attLimit: 300,
+    ctYear: String(new Date().getFullYear()),
     memDate: todayISO(),
     mapYear: '',
   };
@@ -246,6 +247,160 @@
     ui.built = 'attachments';
   }
 
+  // ---------- Ansicht: Länderzähler ----------
+  // Bestimmt aus den Koordinaten der Einträge das Land und zählt die Tage pro Land und Jahr.
+  let geo = null, geoLoading = null;
+  function loadGeo() {
+    if (geo) return Promise.resolve(geo);
+    if (!geoLoading) geoLoading = new Promise((resolve, reject) => {
+      const sc = document.createElement('script');
+      sc.src = 'geo.js?v=1';
+      sc.onload = () => {
+        geo = (window.TB_COUNTRIES || []).map(([cc, name, rings]) => ({ cc, name, rings: rings.map(r => {
+          let x0 = 180, y0 = 90, x1 = -180, y1 = -90;
+          for (let i = 0; i < r.length; i += 2) { x0 = Math.min(x0, r[i]); x1 = Math.max(x1, r[i]); y0 = Math.min(y0, r[i + 1]); y1 = Math.max(y1, r[i + 1]); }
+          return { r, x0, y0, x1, y1 };
+        }) }));
+        resolve(geo);
+      };
+      sc.onerror = () => { geoLoading = null; reject(new Error('Länderdaten konnten nicht geladen werden.')); };
+      document.head.appendChild(sc);
+    });
+    return geoLoading;
+  }
+  const ccCache = new Map();
+  function countryAt(lat, lng) {
+    const key = lat.toFixed(2) + ',' + lng.toFixed(2);
+    if (ccCache.has(key)) return ccCache.get(key);
+    let hit = null;
+    for (const c of geo) {
+      let inside = false;
+      for (const { r, x0, y0, x1, y1 } of c.rings) {
+        if (lng < x0 || lng > x1 || lat < y0 || lat > y1) continue;
+        for (let i = 0, n = r.length / 2, j = n - 1; i < n; j = i++) {
+          const xi = r[2 * i], yi = r[2 * i + 1], xj = r[2 * j], yj = r[2 * j + 1];
+          if ((yi > lat) !== (yj > lat) && lng < (xj - xi) * (lat - yi) / (yj - yi) + xi) inside = !inside;
+        }
+      }
+      if (inside) { hit = c; break; }
+    }
+    if (!hit) {
+      // Punkt knapp vor der Küste oder an einer vereinfachten Grenze: nächstes Land im Umkreis von rund 60 km
+      let best = 0.6;
+      const k = Math.cos(lat * Math.PI / 180);
+      for (const c of geo) for (const { r, x0, y0, x1, y1 } of c.rings) {
+        if (lng < x0 - 1 || lng > x1 + 1 || lat < y0 - 1 || lat > y1 + 1) continue;
+        for (let i = 0; i < r.length; i += 2) { const d = Math.hypot((r[i] - lng) * k, r[i + 1] - lat); if (d < best) { best = d; hit = c; } }
+      }
+    }
+    ccCache.set(key, hit);
+    return hit;
+  }
+  const dayNum = s => { const [y, m, d] = s.split('-').map(Number); return Date.UTC(y, m - 1, d) / 864e5; };
+  const numDay = n => new Date(n * 864e5).toISOString().slice(0, 10);
+  const flag = cc => cc.length === 2 ? String.fromCodePoint(...[...cc].map(ch => 0x1F1E6 + ch.charCodeAt(0) - 65)) : '🏳️';
+  const MAX_GAP = 30; // längere Lücken zwischen zwei Einträgen werden nicht mehr geschätzt
+
+  // Liefert pro Jahr: Länder mit belegten und geschätzten Tagen, Tage ohne Angabe und die einzelnen Aufenthalte.
+  function countryStats() {
+    const days = new Map(); // Tagesnummer -> Map(cc -> 'doc' | 'est')
+    const names = new Map();
+    const put = (n, c, kind) => {
+      if (!days.has(n)) days.set(n, new Map());
+      const m = days.get(n);
+      if (!m.has(c.cc) || kind === 'doc') m.set(c.cc, kind);
+      names.set(c.cc, c.name);
+    };
+    S.entries.forEach(e => {
+      if (!e.date || !e.loc || e.loc.lat == null) return;
+      const c = countryAt(e.loc.lat, e.loc.lng);
+      if (c) put(dayNum(e.date), c, 'doc');
+    });
+    const known = [...days.keys()].sort((a, b) => a - b);
+    // Lücken: liegt davor und danach dasselbe Land, gelten die Tage dazwischen als geschätzt
+    for (let i = 0; i + 1 < known.length; i++) {
+      const a = known[i], b = known[i + 1];
+      if (b - a < 2 || b - a - 1 > MAX_GAP) continue;
+      const common = [...days.get(a).keys()].find(cc => days.get(b).has(cc));
+      if (!common) continue;
+      const c = { cc: common, name: names.get(common) };
+      for (let n = a + 1; n < b; n++) put(n, c, 'est');
+    }
+    const years = new Map();
+    const year = y => { if (!years.has(y)) years.set(y, { countries: new Map(), covered: 0, unknown: 0, total: 0 }); return years.get(y); };
+    [...days.keys()].sort((a, b) => a - b).forEach(n => {
+      const Y = year(numDay(n).slice(0, 4));
+      Y.covered++;
+      days.get(n).forEach((kind, cc) => {
+        if (!Y.countries.has(cc)) Y.countries.set(cc, { cc, name: names.get(cc), doc: 0, est: 0, list: [] });
+        const c = Y.countries.get(cc);
+        c[kind]++; c.list.push(n);
+      });
+    });
+    const today = dayNum(todayISO());
+    const first = known.length ? known[0] : today;
+    years.forEach((Y, y) => {
+      const from = Math.max(dayNum(`${y}-01-01`), first), to = Math.min(dayNum(`${y}-12-31`), today);
+      Y.total = Math.max(0, to - from + 1);
+      Y.unknown = Math.max(0, Y.total - Y.covered);
+      Y.countries.forEach(c => {
+        // zusammenhängende Tage zu Aufenthalten bündeln
+        c.stays = [];
+        c.list.forEach(n => { const last = c.stays[c.stays.length - 1]; if (last && n === last[1] + 1) last[1] = n; else c.stays.push([n, n]); });
+      });
+    });
+    return { years, names };
+  }
+
+  function viewCountries(main) {
+    if (!geo) {
+      main.innerHTML = `<div class="page"><header class="page-head"><h1>Länderzähler</h1></header><p class="hint">Lade Länderdaten …</p></div>`;
+      ui.built = 'countries';
+      loadGeo().then(() => { if (ui.view === 'countries') render(); }, err => { if (ui.view === 'countries') main.querySelector('.hint').textContent = err.message; });
+      return;
+    }
+    const { years } = countryStats();
+    const ys = [...years.keys()].sort().reverse();
+    if (!ys.length) {
+      main.innerHTML = `<div class="page"><header class="page-head"><h1>Länderzähler</h1></header>${empty('public', 'Noch keine Orte', 'Sobald Einträge einen Ort haben, zählt die App hier die Tage pro Land.')}</div>`;
+      ui.built = 'countries'; return;
+    }
+    if (!years.has(ui.ctYear)) ui.ctYear = ys[0];
+    const Y = years.get(ui.ctYear);
+    const list = [...Y.countries.values()].sort((a, b) => (b.doc + b.est) - (a.doc + a.est) || a.name.localeCompare(b.name));
+    const scale = Math.max(183, ...list.map(c => c.doc + c.est));
+    const fmt = n => new Date(n * 864e5).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'UTC' });
+    const bars = list.map(c => {
+      const sum = c.doc + c.est;
+      return `<details class="ct-row"><summary>
+          <span class="ct-name"><i>${flag(c.cc)}</i>${esc(c.name)}</span>
+          <span class="ct-bar"><b style="width:${c.doc / scale * 100}%"></b><b class="est" style="width:${c.est / scale * 100}%"></b><u style="left:${183 / scale * 100}%"></u></span>
+          <span class="ct-val ${sum >= 183 ? 'over' : ''}">${sum}<small> Tage</small></span></summary>
+        <div class="ct-stays"><p>${c.doc} Tage mit Eintrag vor Ort${c.est ? `, ${c.est} Tage geschätzt (Lücke zwischen zwei Einträgen im selben Land)` : ''}.</p>
+          ${c.stays.map(([a, b]) => `<span>${fmt(a)}${b > a ? '–' + fmt(b) : ''} <small>${b - a + 1} ${b === a ? 'Tag' : 'Tage'}</small></span>`).join('')}</div></details>`;
+    }).join('');
+    // Jahresvergleich: alle Länder über alle Jahre
+    const all = new Map();
+    years.forEach((yy, y) => yy.countries.forEach(c => { if (!all.has(c.cc)) all.set(c.cc, { cc: c.cc, name: c.name, per: {}, sum: 0 }); const a = all.get(c.cc); a.per[y] = c.doc + c.est; a.sum += c.doc + c.est; }));
+    const cols = [...ys].reverse();
+    const table = `<div class="ct-table"><table><thead><tr><th>Land</th>${cols.map(y => `<th>${y}</th>`).join('')}<th>Gesamt</th></tr></thead><tbody>
+      ${[...all.values()].sort((a, b) => b.sum - a.sum).map(a => `<tr><td><i>${flag(a.cc)}</i> ${esc(a.name)}</td>${cols.map(y => `<td class="${(a.per[y] || 0) >= 183 ? 'over' : ''}">${a.per[y] || '–'}</td>`).join('')}<td><b>${a.sum}</b></td></tr>`).join('')}
+      <tr class="muted"><td>Ohne Angabe</td>${cols.map(y => `<td>${years.get(y).unknown || '–'}</td>`).join('')}<td>${cols.reduce((n, y) => n + years.get(y).unknown, 0)}</td></tr>
+      </tbody></table></div>`;
+    main.innerHTML = `<div class="page">
+      <header class="page-head"><h1>Länderzähler</h1><p>Tage pro Land, berechnet aus den Orten deiner Einträge</p></header>
+      <div class="chips">${ys.map(y => `<button class="chip" data-act="ct-year" data-year="${y}" aria-pressed="${y === ui.ctYear}">${y}</button>`).join('')}</div>
+      <div class="ct-tiles"><div><b>${list.length}</b><span>${list.length === 1 ? 'Land' : 'Länder'}</span></div>
+        <div><b>${Y.covered}</b><span>Tage zugeordnet</span></div>
+        <div><b>${Y.unknown}</b><span>Tage ohne Angabe</span></div></div>
+      <section class="ct-chart"><h2>${ui.ctYear}</h2>${bars}
+        <p class="ct-legend"><i></i> mit Eintrag vor Ort <i class="est"></i> geschätzt <u></u> 183 Tage</p></section>
+      <h2 class="ct-h">Jahresvergleich</h2>${table}
+      <p class="hint">So wird gezählt: Jeder Tag mit einem Eintrag samt Ort zählt für das Land dieses Ortes. Liegen zwischen zwei Einträgen im selben Land höchstens ${MAX_GAP} Tage ohne Ort, gelten sie als dort verbracht (geschätzt). Tage zwischen zwei verschiedenen Ländern und längere Lücken bleiben „ohne Angabe“. Ein Reisetag mit Einträgen in zwei Ländern zählt für beide. Tippe auf ein Land, um die einzelnen Aufenthalte zu sehen. Die Zahlen sind eine Orientierung und kein steuerlicher Nachweis.</p>
+    </div>`;
+    ui.built = 'countries';
+  }
+
   // ---------- Ansicht: Tags ----------
   function viewTags(main) {
     const tags = tagCounts();
@@ -324,7 +479,7 @@
   }
 
   // ---------- Rahmen ----------
-  const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags };
+  const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags, countries: viewCountries };
   function render() {
     $$('#nav [data-nav]').forEach(b => b.setAttribute('aria-current', b.dataset.nav === ui.view ? 'page' : 'false'));
     const isMap = ui.view === 'map';
@@ -753,6 +908,7 @@
     'cal-next': () => { ui.calYear++; render(); },
     'cal-today': () => { ui.calYear = new Date().getFullYear(); ui.builtYear = null; render(); },
     'cal-day': el => openDay(el.dataset.date),
+    'ct-year': el => { ui.ctYear = el.dataset.year; render(); },
     'att-more': () => { ui.attLimit += 300; render(); },
     'tag-go': el => { ui.tag = el.dataset.tag; ui.q = ''; go('timeline'); },
     'mem-prev': () => { ui.memDate = shiftDay(ui.memDate, -1); render(); },
