@@ -30,6 +30,7 @@
     attLimit: 300,
     ctYear: String(new Date().getFullYear()),
     hbDate: todayISO(),
+    bkFilter: 'open',
     memDate: todayISO(),
     mapYear: '',
   };
@@ -403,7 +404,8 @@
   }
 
   // ---------- Ansicht: Gewohnheiten ----------
-  // Tageswert v: bei „Erreichen“ der Fortschritt (z.B. 1500 von 2500 ml), bei „Vermeiden“ 1 = Ausrutscher.
+  // Tageswert v: bei „Erreichen“ der Fortschritt (z.B. 1500 von 2500 ml), bei „Vermeiden“ die Menge (z.B. Minuten);
+  // über dem Limit gilt der Tag als Ausrutscher.
   const HB_COLORS = ['#f6a5ad', '#8fe3cf', '#9ad4f5', '#43e0b5', '#b548e6', '#e884bd', '#f74c4c', '#9ebfd6', '#f5c451', '#7c8cf8'];
   const mondayOf = s => { const d = parse(s); d.setDate(d.getDate() - (d.getDay() + 6) % 7); return iso(d); };
   const addDays = (s, n) => { const d = parse(s); d.setDate(d.getDate() + n); return iso(d); };
@@ -414,7 +416,7 @@
   }
   const hbStart = h => h.start || iso(new Date(h.createdAt || Date.now()));
   const hbDaily = h => h.kind === 'avoid' || !(h.perWeek >= 1 && h.perWeek <= 6);
-  const hbDone = (h, v) => h.kind === 'avoid' ? !v : (v || 0) >= (h.target || 1);
+  const hbDone = (h, v) => h.kind === 'avoid' ? (v || 0) <= (h.target || 0) : (v || 0) >= (h.target || 1);
   function hbStreak(h, days, today) {
     const start = hbStart(h);
     const ok = d => hbDone(h, days.get(d));
@@ -440,7 +442,7 @@
     });
     return total ? done / total : 0;
   }
-  const hbProgress = (h, v) => h.kind === 'avoid' ? (h.unit ? `Limit: ${h.target || 0} ${h.unit}` : 'Vermeiden')
+  const hbProgress = (h, v) => h.kind === 'avoid' ? (h.target ? `${v || 0}/${h.target}${h.unit ? ' ' + h.unit : ''} Limit` : v ? `${v}× passiert` : 'Gehalten')
     : `${v || 0}/${h.target || 1}${h.unit ? ' ' + h.unit : ''}`;
 
   function viewHabits(main) {
@@ -460,11 +462,11 @@
       const st = hbStreak(h, days, today);
       const extra = !hbDaily(h) && done ? '<i>Extra Tag</i>' : '';
       const slip = h.kind === 'avoid';
-      return `<div class="hb ${slip ? (v ? 'slip' : 'done') : done ? 'done' : ''}" style="--hc:${esc(h.color || HB_COLORS[0])}" data-act="hb-open" data-id="${esc(h.id)}" tabindex="0">
+      return `<div class="hb ${slip ? (done ? 'done' : 'slip') : done ? 'done' : ''}" style="--hc:${esc(h.color || HB_COLORS[0])}" data-act="hb-open" data-id="${esc(h.id)}" tabindex="0">
         <span class="hb-ico">${esc(h.icon || '✅')}</span>
         <div class="hb-main"><b>${esc(h.name)}</b><span class="hb-sub"><i>${esc(hbProgress(h, v))}</i>${extra}${h.note ? `<em>${esc(h.note)}</em>` : ''}</span></div>
         <div class="hb-side">${st.n ? `<small>🔥 ${st.n} ${st.unit}</small>` : '<small>&nbsp;</small>'}
-          <button class="hb-check" data-act="hb-toggle" data-id="${esc(h.id)}" aria-label="${slip ? 'Ausrutscher eintragen' : 'Erledigt'}" aria-pressed="${slip ? !!v : done}">${ms(slip ? 'close' : 'check')}</button></div>
+          <button class="hb-check" data-act="hb-toggle" data-id="${esc(h.id)}" aria-label="${slip ? 'Ausrutscher eintragen' : 'Erledigt'}" aria-pressed="${slip ? !done : done}">${ms(slip ? 'close' : 'check')}</button></div>
       </div>`;
     }).join('');
     const keepStrip = ui.built === 'habits' ? ($('#hb-strip') || {}).scrollLeft : null;
@@ -484,7 +486,7 @@
     const date = ui.hbDate > todayISO() ? todayISO() : ui.hbDate;
     const v = S.logValue(id, date);
     const target = h.target || 1;
-    if (h.kind === 'avoid') return S.setLog(id, date, v ? 0 : 1);
+    if (h.kind === 'avoid') return S.setLog(id, date, hbDone(h, v) ? (h.target || 0) + 1 : 0);
     if (v >= target) return S.setLog(id, date, 0);
     S.setLog(id, date, h.step && target > 1 ? Math.min(target, v + h.step) : target);
   }
@@ -500,10 +502,10 @@
     o.innerHTML = `<div class="sheet" role="dialog" aria-label="Gewohnheit">
       <header class="sheet-head"><button class="icon-btn" data-act="set-close" aria-label="Zurück">${ms('arrow_back')}</button><b>${h ? esc(h.name) : 'Neue Gewohnheit'}</b></header>
       <div class="sheet-body">
-        ${h && h.kind !== 'avoid' && (h.target || 1) > 1 ? `<section class="set"><h3>${esc(date === todayISO() ? 'Heute' : fmtLong(date))}</h3>
+        ${h && (h.kind === 'avoid' ? true : (h.target || 1) > 1) ? `<section class="set"><h3>${esc(date === todayISO() ? 'Heute' : fmtLong(date))}</h3>
           <div class="hb-stepper"><button class="btn ghost" data-act="hb-step" data-d="-1">${ms('remove')}</button>
-            <input id="hb-val" type="number" inputmode="decimal" min="0" value="${v}"><span>von ${h.target} ${esc(h.unit || '')}</span>
-            <button class="btn ghost" data-act="hb-step" data-d="1">${ms('add')}</button><button class="btn" data-act="hb-full">Erledigt</button></div></section>` : ''}
+            <input id="hb-val" type="number" inputmode="decimal" min="0" value="${v}"><span>${h.kind === 'avoid' ? (h.target ? `Limit ${h.target} ${esc(h.unit || '')}` : 'mal passiert') : `von ${h.target} ${esc(h.unit || '')}`}</span>
+            <button class="btn ghost" data-act="hb-step" data-d="1">${ms('add')}</button>${h.kind === 'avoid' ? '' : '<button class="btn" data-act="hb-full">Erledigt</button>'}</div></section>` : ''}
         <section class="set"><h3>${h ? 'Bearbeiten' : 'Gewohnheit anlegen'}</h3>
           <form id="hb-form" class="tplform">
             <div class="hb-f2"><input name="icon" type="text" maxlength="4" placeholder="🙂" value="${esc(d.icon || '')}" aria-label="Symbol (Emoji)"><input name="name" type="text" placeholder="Name, z.B. Wasser trinken" value="${esc(d.name)}" required></div>
@@ -580,6 +582,130 @@
         ${c.open.length ? `<section class="set"><h3>Heute offene Gewohnheiten (${c.open.length})</h3>${c.open.map(h => `<button class="listrow" data-nav="habits"><i class="hb-mini">${esc(h.icon || '✅')}</i><span>${esc(h.name)}</span>${h.remind ? `<small>${esc(h.remind)}</small>` : ''}${ms('chevron_right')}</button>`).join('')}</section>` : ''}
         ${c.level === 'ok' ? empty('check', 'Alles gepflegt', 'In den letzten 30 Tagen fehlt kein Eintrag und kein Ort.') : ''}
       </div></div>`;
+  }
+
+  // ---------- Ansicht: Bucket-Liste ----------
+  // Ziele mit Lebensphase (Alter von–bis), Ort und passenden Monaten. Daraus entstehen Vorschläge:
+  // was sich bald schließt, was gerade in der Nähe liegt, was in die Jahreszeit passt.
+  const BK_CATS = ['Reise', 'Erlebnis', 'Sport', 'Menschen', 'Lernen', 'Beruf', 'Sonstiges'];
+  const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+  const bkProfile = () => S.bucketItem('_profile') || {};
+  function bkAge() {
+    const b = bkProfile().birth; if (!b) return null;
+    const t = new Date(), d = parse(b);
+    return t.getFullYear() - d.getFullYear() - (t.getMonth() < d.getMonth() || (t.getMonth() === d.getMonth() && t.getDate() < d.getDate()) ? 1 : 0);
+  }
+  const kmBetween = (a, b) => {
+    const R = 6371, rad = x => x * Math.PI / 180;
+    const h = Math.sin(rad(b.lat - a.lat) / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(rad(b.lng - a.lng) / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  };
+  const lastPlace = () => { const e = sorted().find(x => x.loc && x.loc.lat != null); return e ? e.loc : null; };
+  const bkSub = b => [b.cat, b.loc && b.loc.name, b.ageTo ? `bis ${b.ageTo} Jahre` : '', (b.months || []).length ? (b.months || []).map(m => MONTHS[m]).join(', ') : '', b.plan ? 'geplant ' + parse(b.plan + '-01').toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }) : ''].filter(Boolean).join(' · ');
+
+  // Vorschläge mit Begründung, wichtigste zuerst
+  function bucketSuggestions(max = 5) {
+    const open = S.bucket.filter(b => !b.done);
+    const age = bkAge(), here = lastPlace(), now = new Date();
+    const m = now.getMonth(), ym = `${now.getFullYear()}-${pad(m + 1)}`;
+    const out = [], seen = new Set();
+    const add = (b, reason) => { if (!seen.has(b.id) && out.length < max) { seen.add(b.id); out.push({ b, reason }); } };
+    open.filter(b => b.plan && b.plan <= ym).forEach(b => add(b, b.plan === ym ? 'Für diesen Monat geplant' : 'War schon geplant und ist noch offen'));
+    const hereCountry = here && here.name ? here.name.split(',').pop().trim() : '';
+    if (here) open.filter(b => b.loc && b.loc.lat != null && !b.loc.wide).map(b => [b, kmBetween(here, b.loc)]).filter(x => x[1] <= 150).sort((x, y) => x[1] - y[1])
+      .forEach(([b, km]) => add(b, `In der Nähe: rund ${Math.max(1, Math.round(km))} km von ${here.name ? here.name.split(',').slice(-2, -1)[0].trim() || 'deinem letzten Ort' : 'deinem letzten Ort'}`));
+    if (hereCountry) open.filter(b => b.loc && b.loc.country === hereCountry).forEach(b => add(b, `Du bist gerade in ${hereCountry}`));
+    if (age != null) open.filter(b => b.ageTo && b.ageTo - age <= 2).sort((x, y) => x.ageTo - y.ageTo)
+      .forEach(b => add(b, b.ageTo < age ? `Zeitfenster war bis ${b.ageTo}, jetzt nachholen` : b.ageTo === age ? 'Zeitfenster endet dieses Lebensjahr' : `Zeitfenster endet mit ${b.ageTo}`));
+    open.filter(b => (b.months || []).includes(m) || (b.months || []).includes((m + 1) % 12)).forEach(b => add(b, (b.months || []).includes(m) ? 'Passt in diesen Monat' : 'Passt in den nächsten Monat'));
+    [...open].sort((x, y) => (x.createdAt || 0) - (y.createdAt || 0)).forEach(b => add(b, 'Steht schon länger auf deiner Liste'));
+    return out;
+  }
+  function bkRow(b) {
+    return `<div class="bk ${b.done ? 'done' : ''}" data-act="bk-open" data-id="${esc(b.id)}" tabindex="0">
+      <button class="hb-check" data-act="bk-toggle" data-id="${esc(b.id)}" aria-pressed="${!!b.done}" aria-label="Erledigt">${ms('check')}</button>
+      <div><b>${esc(b.title)}</b>${bkSub(b) ? `<small>${esc(bkSub(b))}</small>` : ''}</div></div>`;
+  }
+  function viewBucket(main) {
+    const all = S.bucket;
+    const age = bkAge();
+    const open = all.filter(b => !b.done), done = all.filter(b => b.done);
+    const list = ui.bkFilter === 'done' ? done : ui.bkFilter === 'all' ? all : open;
+    // Lebensphasen in 5-Jahres-Abschnitten, wie die „Zeit-Eimer“ aus Die with Zero
+    const phase = b => b.done && ui.bkFilter !== 'open' ? 'Erledigt' : !b.ageTo ? 'Ohne Zeitfenster' : age != null && b.ageTo < age ? 'Zeitfenster überschritten' : `Bis ${Math.ceil(b.ageTo / 5) * 5} Jahre`;
+    const groups = new Map();
+    list.sort((x, y) => (x.ageTo || 999) - (y.ageTo || 999) || (x.createdAt || 0) - (y.createdAt || 0)).forEach(b => { const k = phase(b); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(b); });
+    const sug = ui.bkFilter === 'open' ? bucketSuggestions(4) : [];
+    main.innerHTML = `<div class="page">
+      <header class="page-head row"><div><h1>Bucket-Liste</h1><p>${open.length} offen · ${done.length} erledigt${age != null ? ` · du bist ${age}` : ''}</p></div>
+        <div class="row-btns"><button class="btn" data-act="bk-new">${ms('add')} Ziel</button></div></header>
+      ${bkProfile().birth ? '' : `<section class="set"><h3>Geburtsdatum</h3><p class="hint">Damit die Liste nach Lebensphasen sortiert und warnt, wenn sich ein Zeitfenster schließt.</p>
+        <form id="bk-birth" class="hb-stepper"><input type="date" name="birth" required style="width:auto"><button class="btn">Speichern</button></form></section>`}
+      ${sug.length ? `<section class="memory"><header>${ms('star')}<div><b>Vorschläge für jetzt</b><span>Für deine Wochen- und Monatsplanung</span></div></header>
+        ${sug.map(({ b, reason }) => `<div class="bk sug" data-act="bk-open" data-id="${esc(b.id)}" tabindex="0"><div><em>${esc(reason)}</em><b>${esc(b.title)}</b>${bkSub(b) ? `<small>${esc(bkSub(b))}</small>` : ''}</div>
+          <button class="btn small ghost" data-act="bk-plan" data-id="${esc(b.id)}">Diesen Monat</button></div>`).join('')}</section>` : ''}
+      <div class="chips">${[['open', 'Offen'], ['done', 'Erledigt'], ['all', 'Alle']].map(([k, n]) => `<button class="chip" data-act="bk-filter" data-f="${k}" aria-pressed="${ui.bkFilter === k}">${n}</button>`).join('')}</div>
+      ${all.length ? [...groups.entries()].map(([k, items]) => `<h2 class="ct-h">${esc(k)}</h2><div class="list">${items.map(bkRow).join('')}</div>`).join('') || '<p class="hint">Hier ist nichts.</p>'
+        : empty('flag', 'Noch keine Ziele', 'Trage ein, was du in deinem Leben noch machen willst. Mit „+ Ziel“ gehen auch mehrere Zeilen auf einmal.')}
+    </div>`;
+    const bf = $('#bk-birth');
+    if (bf) bf.addEventListener('submit', ev => { ev.preventDefault(); S.saveBucket({ id: '_profile', birth: new FormData(bf).get('birth') }); });
+    ui.built = 'bucket';
+  }
+  let bkEdit = null, bkLoc = null;
+  function openBucket(id) {
+    const b = id ? S.bucketItem(id) : null;
+    bkEdit = id || null;
+    bkLoc = b && b.loc ? { ...b.loc } : null;
+    const d = b || { title: '', cat: 'Erlebnis', note: '', ageFrom: '', ageTo: '', months: [], plan: '' };
+    const o = $('#overlay');
+    o.hidden = false;
+    o.innerHTML = `<div class="sheet" role="dialog" aria-label="Ziel">
+      <header class="sheet-head"><button class="icon-btn" data-act="set-close" aria-label="Zurück">${ms('arrow_back')}</button><b>${b ? 'Ziel bearbeiten' : 'Neues Ziel'}</b></header>
+      <div class="sheet-body"><section class="set">
+        <form id="bk-form" class="tplform">
+          ${b ? `<input name="title" type="text" value="${esc(d.title)}" placeholder="Was willst du erleben?" required>`
+            : `<textarea name="title" rows="3" placeholder="Was willst du erleben? Mehrere Ziele: eine Zeile pro Ziel." required></textarea>`}
+          <div class="hb-f3"><label>Bereich<select name="cat">${BK_CATS.map(c => `<option ${c === d.cat ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+            <label>Ab Alter<input name="ageFrom" type="number" inputmode="numeric" min="0" max="120" value="${esc(d.ageFrom || '')}"></label>
+            <label>Bis Alter<input name="ageTo" type="number" inputmode="numeric" min="0" max="120" value="${esc(d.ageTo || '')}" placeholder="z.B. 40"></label></div>
+          <label>Passende Monate</label>
+          <div class="bk-months">${MONTHS.map((m, i) => `<label><input type="checkbox" name="months" value="${i}" ${(d.months || []).includes(i) ? 'checked' : ''}><span>${m}</span></label>`).join('')}</div>
+          <label>Ort (für Vorschläge in der Nähe)</label>
+          <div id="bk-loc"></div>
+          <div class="hb-f3"><label>Geplant für<input name="plan" type="month" value="${esc(d.plan || '')}"></label>
+            ${b ? `<label>Erledigt am<input name="done" type="date" value="${esc(d.done || '')}"></label>` : ''}</div>
+          <textarea name="note" rows="3" placeholder="Notiz: mit wem, was es braucht, warum es dir wichtig ist">${esc(d.note || '')}</textarea>
+          <div class="row-btns">${b ? `<button type="button" class="btn danger ghost" data-act="bk-delete" data-id="${esc(b.id)}">Löschen</button>` : ''}<button class="btn">Speichern</button></div>
+        </form></section></div></div>`;
+    bkLocBox();
+    $('#bk-form').addEventListener('submit', ev => {
+      if (ev.submitter && ev.submitter.dataset.act) return;
+      ev.preventDefault();
+      const f = new FormData(ev.target);
+      const int = k => { const n = parseInt(f.get(k), 10); return isFinite(n) && n > 0 ? n : null; };
+      const base = { cat: String(f.get('cat')), ageFrom: int('ageFrom'), ageTo: int('ageTo'), months: f.getAll('months').map(Number), plan: String(f.get('plan') || ''), note: String(f.get('note')).trim(), loc: bkLoc };
+      if (b) S.saveBucket({ ...b, ...base, title: String(f.get('title')).trim(), done: String(f.get('done') || '') });
+      else String(f.get('title')).split('\n').map(t => t.replace(/^[-*•\d.)\s]+/, '').trim()).filter(Boolean).forEach((title, i) => S.saveBucket({ ...base, title, done: '', createdAt: Date.now() + i }));
+      closeSettings(); toast('Gespeichert');
+    });
+  }
+  function bkLocBox() {
+    const box = $('#bk-loc'); if (!box) return;
+    box.innerHTML = (bkLoc ? `<div class="locbox"><input type="text" value="${esc(bkLoc.name || '')}" readonly><button type="button" class="icon-btn" data-act="bk-loc-clear" aria-label="Ort entfernen">${ms('close')}</button></div>` : '')
+      + `<div class="locrow"><div class="search small">${ms('search')}<input id="bk-loc-q" type="search" placeholder="Ort suchen und Enter drücken" autocomplete="off" enterkeyhint="search"></div></div><div id="bk-loc-results" class="menu inline" hidden></div>`;
+    $('#bk-loc-q').addEventListener('keydown', async ev => {
+      if (ev.key !== 'Enter') return;
+      ev.preventDefault();
+      const q = ev.target.value.trim(); if (!q) return;
+      const res = $('#bk-loc-results'); res.hidden = false; res.innerHTML = '<p class="hint">Suche …</p>';
+      try {
+        const data = await (await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=6&lang=de`)).json();
+        const feats = (data.features || []).filter(f => f.geometry && f.geometry.coordinates);
+        if (!$('#bk-loc-results')) return;
+        res.innerHTML = feats.length ? feats.map(f => `<button type="button" data-act="bk-loc-pick" data-lat="${f.geometry.coordinates[1]}" data-lng="${f.geometry.coordinates[0]}" data-name="${esc(placeName(f.properties))}" data-country="${esc(f.properties.country || '')}" data-wide="${/^(country|state|continent)$/.test(f.properties.type || '') ? 1 : ''}">${ms('location_on')}${esc(placeName(f.properties))}</button>`).join('') : '<p class="hint">Kein Ort gefunden.</p>';
+      } catch { res.innerHTML = '<p class="hint">Die Ortssuche ist gerade nicht erreichbar.</p>'; }
+    });
   }
 
   // ---------- Ansicht: Tags ----------
@@ -660,8 +786,8 @@
   }
 
   // ---------- Rahmen ----------
-  const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags, countries: viewCountries, habits: viewHabits };
-  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', travel: 'Reisekarte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten' };
+  const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags, countries: viewCountries, habits: viewHabits, bucket: viewBucket };
+  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', travel: 'Reisekarte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten', bucket: 'Bucket-Liste' };
   function render() {
     $$('#nav [data-nav]').forEach(b => b.setAttribute('aria-current', b.dataset.nav === ui.view ? 'page' : 'false'));
     const isMap = ui.view === 'map';
@@ -913,7 +1039,7 @@
     const before = ta.value.slice(0, start), after = ta.value.slice(ta.selectionEnd == null ? start : ta.selectionEnd);
     const lead = before && !before.endsWith('\n\n') ? (before.endsWith('\n') ? '\n' : '\n\n') : '';
     ta.value = before + lead + t.body + (after && !t.body.endsWith('\n') ? '\n' : '') + after;
-    if (!$('#ed-title').value.trim()) $('#ed-title').value = t.name;
+    if (!$('#ed-title').value.trim() && t.name) $('#ed-title').value = t.name;
     (t.tags || []).forEach(addTag);
     edTags(); grow(); scheduleCommit();
     const pos = (before + lead + t.body).length;
@@ -1193,6 +1319,20 @@
       S.setLog(h.id, date, v); $('#hb-val').value = v;
     },
     'hb-full': () => { const h = S.habit(hbEdit); if (!h) return; S.setLog(h.id, ui.hbDate > todayISO() ? todayISO() : ui.hbDate, h.target || 1); closeSettings(); },
+    'bk-new': () => openBucket(null),
+    'bk-open': el => openBucket(el.dataset.id),
+    'bk-toggle': el => { const b = S.bucketItem(el.dataset.id); if (b) S.saveBucket({ ...b, done: b.done ? '' : todayISO() }); },
+    'bk-plan': el => { const b = S.bucketItem(el.dataset.id); if (!b) return; S.saveBucket({ ...b, plan: todayISO().slice(0, 7) }); toast('Für diesen Monat eingeplant'); },
+    'bk-filter': el => { ui.bkFilter = el.dataset.f; render(); },
+    'bk-delete': el => { if (!confirm('Dieses Ziel löschen?')) return; S.deleteBucket(el.dataset.id); closeSettings(); },
+    'bk-loc-pick': el => { bkLoc = { lat: +(+el.dataset.lat).toFixed(6), lng: +(+el.dataset.lng).toFixed(6), name: el.dataset.name, country: el.dataset.country || '', ...(el.dataset.wide ? { wide: true } : {}) }; bkLocBox(); },
+    'bk-loc-clear': () => { bkLoc = null; bkLocBox(); },
+    'ed-bucket': () => {
+      $('#ed-tplmenu').hidden = true;
+      const sug = bucketSuggestions(5);
+      if (!sug.length) return toast('Deine Bucket-Liste hat keine offenen Ziele.');
+      insertTemplate({ name: '', tags: [], body: '## Bucket-Liste: Vorschläge\n' + sug.map(({ b, reason }) => `- ${b.title} (${reason})`).join('\n') + '\n' });
+    },
     'push-on': pushOn,
     'push-off': pushOff,
     'ct-year': el => { ui.ctYear = el.dataset.year; render(); },
@@ -1240,7 +1380,7 @@
       const m = $('#ed-tplmenu');
       if (!m.hidden) { m.hidden = true; return; }
       const list = S.templates;
-      m.innerHTML = list.length ? list.map(t => `<button data-act="ed-tpl" data-id="${esc(t.id)}">${ms('description')}${esc(t.name)}</button>`).join('') : '<p class="hint">Keine Vorlagen vorhanden. Lege sie in den Einstellungen an.</p>';
+      m.innerHTML = list.length ? list.map(t => `<button data-act="ed-tpl" data-id="${esc(t.id)}">${ms('description')}${esc(t.name)}</button>`).join('') + `<button data-act="ed-bucket">${ms('flag')}Bucket-Vorschläge einfügen</button>` : '<p class="hint">Keine Vorlagen vorhanden. Lege sie in den Einstellungen an.</p>';
       m.hidden = false;
     },
     'ed-tpl': el => { $('#ed-tplmenu').hidden = true; const t = S.template(el.dataset.id); if (t) insertTemplate(t); },

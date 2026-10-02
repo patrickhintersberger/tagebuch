@@ -12,6 +12,7 @@
     templates: {},  // id -> Vorlage
     habits: {},     // id -> Gewohnheit
     logs: {},       // id (Gewohnheit_Datum) -> Tageswert einer Gewohnheit
+    bucket: {},     // id -> Ziel der Bucket-Liste (id '_profile' = Geburtsdatum)
     push: {},       // id -> Gerät, das die tägliche Erinnerung bekommt (Push-Abo)
     pending: [],    // Bild-IDs, die noch hochgeladen werden müssen
     pendingThumbs: [], // nur das Vorschaubild muss noch hochgeladen werden (nachträglich erzeugt)
@@ -70,6 +71,7 @@
       store.habits = s.habits || {};
       store.logs = s.logs || {};
       store.push = s.push || {};
+      store.bucket = s.bucket || {};
       store.pending = s.pending || [];
       store.pendingThumbs = s.pendingThumbs || [];
       store.shas = s.shas || {};
@@ -81,7 +83,7 @@
     });
   }
   function saveLocal() {
-    return idbSet('kv', 'state', { entries: store.entries, templates: store.templates, habits: store.habits, logs: store.logs, push: store.push, pending: store.pending, pendingThumbs: store.pendingThumbs, shas: store.shas, dirty: store.dirty });
+    return idbSet('kv', 'state', { entries: store.entries, templates: store.templates, habits: store.habits, logs: store.logs, push: store.push, bucket: store.bucket, pending: store.pending, pendingThumbs: store.pendingThumbs, shas: store.shas, dirty: store.dirty });
   }
 
   let saveTimer = null;
@@ -140,20 +142,21 @@
       entries: Object.values(store.entries).sort(byWhen),
       habits: Object.values(store.habits),
       logs: Object.values(store.logs),
+      bucket: Object.values(store.bucket),
     }, null, 1);
   }
 
   // ---------- Aufteilung in Dateien ----------
   const yearOf = e => (e.date || '0000').slice(0, 4);
   // Dateischlüssel -> Sammlung: 'templates', 'habits', '2026' (Einträge), 'h2026' (Gewohnheits-Tageswerte)
-  const collOf = key => key === 'templates' || key === 'habits' || key === 'push' ? key : key[0] === 'h' ? 'logs' : 'entries';
+  const collOf = key => key === 'templates' || key === 'habits' || key === 'push' || key === 'bucket' ? key : key[0] === 'h' ? 'logs' : 'entries';
   function bucket(key) {
     const c = collOf(key);
-    if (c === 'templates' || c === 'habits' || c === 'push') return Object.values(store[c]);
+    if (c === 'templates' || c === 'habits' || c === 'push' || c === 'bucket') return Object.values(store[c]);
     if (c === 'logs') return Object.values(store.logs).filter(l => 'h' + yearOf(l) === key);
     return Object.values(store.entries).filter(e => yearOf(e) === key);
   }
-  function bucketKeys() { return [...new Set(['templates', 'habits', 'push', ...Object.values(store.entries).map(yearOf), ...Object.values(store.logs).map(l => 'h' + yearOf(l))])]; }
+  function bucketKeys() { return [...new Set(['templates', 'habits', 'push', 'bucket', ...Object.values(store.entries).map(yearOf), ...Object.values(store.logs).map(l => 'h' + yearOf(l))])]; }
   function fileBody(key) {
     const c = collOf(key);
     const items = c === 'entries' ? bucket(key).sort(byWhen) : bucket(key).sort((x, y) => String(x.name || x.id).localeCompare(String(y.name || y.id)));
@@ -204,7 +207,7 @@
     if (!res.ok) throw new Error(`GitHub antwortet mit Fehler ${res.status}.`);
     const list = await res.json();
     const out = {};
-    (Array.isArray(list) ? list : []).forEach(f => { const m = /^(templates|habits|push|h?\d{4})\.json$/.exec(f.name); if (m) out[m[1]] = f.sha; });
+    (Array.isArray(list) ? list : []).forEach(f => { const m = /^(templates|habits|push|bucket|h?\d{4})\.json$/.exec(f.name); if (m) out[m[1]] = f.sha; });
     return out;
   }
 
@@ -554,6 +557,22 @@
       markDirty('h' + date.slice(0, 4));
       emit(); schedulePush();
     },
+    get bucket() { return Object.values(store.bucket).filter(b => !b.deleted && b.id !== '_profile'); },
+    bucketItem(id) { const b = store.bucket[id]; return b && !b.deleted ? b : null; },
+    saveBucket(b) {
+      const now = Date.now();
+      const item = { createdAt: now, ...b, updatedAt: now };
+      if (!item.id) item.id = uid();
+      store.bucket[item.id] = item;
+      markDirty('bucket');
+      emit(); schedulePush();
+      return item;
+    },
+    deleteBucket(id) {
+      store.bucket[id] = { id, deleted: true, updatedAt: Date.now() };
+      markDirty('bucket');
+      emit(); schedulePush();
+    },
     get pushSubs() { return Object.values(store.push).filter(p => !p.deleted); },
     savePushSub(item) {
       store.push[item.id] = { ...item, updatedAt: Date.now() };
@@ -576,6 +595,7 @@
       // Nur fehlende Einträge übernehmen, vorhandene bleiben unverändert.
       (data.entries || []).forEach(e => { if (e && e.id && !store.entries[e.id]) { store.entries[e.id] = { ...e, updatedAt: now }; markDirty(yearOf(e)); n++; } });
       (data.templates || []).forEach(t => { if (t && t.id && !store.templates[t.id]) { store.templates[t.id] = { ...t, updatedAt: now }; markDirty('templates'); } });
+      (data.bucket || []).forEach(b => { if (b && b.id && !store.bucket[b.id]) { store.bucket[b.id] = { ...b, updatedAt: now }; markDirty('bucket'); } });
       (data.habits || []).forEach(h => { if (h && h.id && !store.habits[h.id]) { store.habits[h.id] = { ...h, updatedAt: now }; markDirty('habits'); } });
       (data.logs || []).forEach(l => { if (l && l.id && l.date && !store.logs[l.id]) { store.logs[l.id] = { ...l, updatedAt: now }; markDirty('h' + yearOf(l)); } });
       emit(); schedulePush();

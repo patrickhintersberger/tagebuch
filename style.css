@@ -444,3 +444,23 @@ img.missing { opacity: .35; }
 @media (min-width: 900px) { #travelview { left: 232px; } }
 @media (max-width: 899px) { #travelview { top: calc(52px + env(safe-area-inset-top, 0px)); } }
 #app[data-view="travel"] .fab-new { display: none; }
+
+/* ================= Bucket-Liste ================= */
+#app[data-view="bucket"] .fab-new { display: none; }
+.bk { display: flex; align-items: center; gap: 12px; padding: 12px 14px; cursor: pointer; }
+.list .bk + .bk { border-top: 1px solid var(--line); }
+.bk:hover { background: var(--surface-2); }
+.bk > div { flex: 1; min-width: 0; }
+.bk b { display: block; font-weight: 600; font-size: 15.5px; overflow-wrap: anywhere; }
+.bk small { display: block; color: var(--ink-2); font-size: 13px; margin-top: 1px; }
+.bk em { display: block; font-style: normal; color: var(--accent); font-size: 12.5px; font-weight: 600; }
+.bk.done b { text-decoration: line-through; color: var(--ink-3); }
+.bk .hb-check { background: var(--surface-2); }
+.bk.sug { background: var(--surface); border-radius: 12px; margin-bottom: 6px; }
+.bk-months { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+.bk-months label { display: block; }
+.bk-months input { position: absolute; opacity: 0; width: 0; height: 0; }
+.bk-months span { display: block; text-align: center; padding: 7px 0; border: 1px solid var(--line); border-radius: 8px; font-size: 13.5px; font-weight: 500; color: var(--ink-2); cursor: pointer; }
+.bk-months input:checked + span { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.bk-months input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tplform .search input { border: 0; height: auto; padding: 0; background: transparent; }
