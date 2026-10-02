@@ -880,6 +880,9 @@
       // Die Reisekarte läuft als eigene App im Rahmen und bleibt beim Wechseln der Ansicht geladen
       $('#mapview').hidden = true;
       if (!$('#travelview iframe')) {
+        // Ein Token für beides: hat die Reisekarte auf diesem Gerät noch keinen, bekommt sie den von Daily.
+        // Er funktioniert dort, sobald er auf GitHub auch für das Repo „reisekarte-daten“ freigegeben ist.
+        try { if (!localStorage.getItem('rk-token') && localStorage.getItem('tb-token')) localStorage.setItem('rk-token', localStorage.getItem('tb-token')); } catch {}
         const f = document.createElement('iframe');
         f.title = 'Reisekarte'; f.allow = 'geolocation';
         f.src = /github\.io$/.test(location.hostname) ? '/reisekarte/' : 'https://patrickhintersberger.github.io/reisekarte/';
