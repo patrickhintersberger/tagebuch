@@ -975,7 +975,7 @@
         <section class="field"><label>${ms('star')} Bewertung des Tages</label><div class="rate" id="ed-rate"></div></section>
         <section class="field"><label>${ms('sell')} Tags</label><div id="ed-tags"></div></section>
         <section class="field"><label>${ms('location_on')} Ort</label><div id="ed-loc"></div></section>
-        <section class="field"><label>${ms('add_a_photo')} Bilder & Videos</label><div class="photos" id="ed-photos"></div>
+        <section class="field"><label>${ms('add_a_photo')} Bilder & Videos</label><p class="hint" style="margin-top:-4px">Das erste ist das Titelbild des Tages. Mit dem Stern machst du ein anderes zum Titelbild.</p><div class="photos" id="ed-photos"></div>
           <input type="file" id="ed-file" accept="image/*,video/*" multiple hidden></section>
         <div id="ed-memory"></div>
       </div>
@@ -1112,7 +1112,8 @@
     } catch { box.innerHTML = '<p class="hint">Die Ortssuche ist gerade nicht erreichbar.</p>'; }
   }
   function edPhotos() {
-    $('#ed-photos').innerHTML = ed.entry.photos.map(p => `<figure><img data-thumb="${esc(p.id)}" data-act="lightbox" data-id="${esc(p.id)}" data-kind="${p.kind || 'photo'}" alt="">${p.kind === 'video' ? `<span class="play">${ms('play_arrow', 'fill')}</span>` : ''}
+    // Das erste Bild ist das Titelbild des Tages (Kalender, Zeitleiste, Karte); mit dem Stern rückt ein anderes nach vorn.
+    $('#ed-photos').innerHTML = ed.entry.photos.map((p, i) => `<figure class="${i === 0 ? 'cover' : ''}">${i === 0 ? '<span class="cover-tag">Titelbild</span>' : `<button class="mk-cover" data-act="ed-photo-cover" data-id="${esc(p.id)}" aria-label="Als Titelbild verwenden" title="Als Titelbild verwenden">${ms('star', 'fill')}</button>`}<img data-thumb="${esc(p.id)}" data-act="lightbox" data-id="${esc(p.id)}" data-kind="${p.kind || 'photo'}" alt="">${p.kind === 'video' ? `<span class="play">${ms('play_arrow', 'fill')}</span>` : ''}
       ${p.lat != null ? `<span class="geo" title="Bild enthält Geodaten">${ms('location_on')}</span>` : ''}
       <button data-act="ed-photo-del" data-id="${esc(p.id)}" aria-label="Bild entfernen">${ms('close')}</button></figure>`).join('') +
       `<button class="add" data-act="ed-photo-add" aria-label="Bild hinzufügen">${ms('add_a_photo')}<span>Bild oder Video</span></button>`;
@@ -1472,6 +1473,7 @@
     'ed-loc-clear': () => { ed.entry.loc = null; edLoc(); scheduleCommit(); },
     'ed-loc-pick': el => setLoc(el.dataset.lat, el.dataset.lng, el.dataset.name),
     'ed-photo-add': () => $('#ed-file').click(),
+    'ed-photo-cover': el => { const ph = ed.entry.photos; const i = ph.findIndex(p => p.id === el.dataset.id); if (i > 0) { ph.unshift(ph.splice(i, 1)[0]); edPhotos(); scheduleCommit(); toast('Titelbild geändert'); } },
     'ed-photo-del': el => { ed.entry.photos = ed.entry.photos.filter(p => p.id !== el.dataset.id); edPhotos(); scheduleCommit(); },
     'ed-templates': () => {
       const m = $('#ed-tplmenu');
