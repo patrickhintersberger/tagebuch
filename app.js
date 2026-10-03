@@ -982,6 +982,28 @@
     </div>`;
     edHead(); edRate(); edTags(); edLoc(); edPhotos(); edMemory(); grow();
     ['ed-title', 'ed-text', 'ed-time'].forEach(i => $('#' + i).addEventListener('input', () => { if (i === 'ed-text') grow(); scheduleCommit(); }));
+    // Tab rückt im Text ein (statt zum nächsten Feld zu springen), Umschalt+Tab nimmt den Einzug zurück.
+    // Mit markierten Zeilen gilt das für alle markierten Zeilen.
+    $('#ed-text').addEventListener('keydown', ev => {
+      if (ev.key !== 'Tab' || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+      ev.preventDefault();
+      const ta = ev.target, v = ta.value;
+      let a = ta.selectionStart, b = ta.selectionEnd;
+      const lineStart = v.lastIndexOf('\n', a - 1) + 1;
+      if (a === b && !ev.shiftKey) {
+        ta.value = v.slice(0, a) + '\t' + v.slice(b);
+        ta.selectionStart = ta.selectionEnd = a + 1;
+      } else {
+        const end = b > a && v[b - 1] === '\n' ? b - 1 : b;
+        const lines = v.slice(lineStart, end).split('\n');
+        const out = lines.map(l => ev.shiftKey ? l.replace(/^(\t| {1,4})/, '') : '\t' + l);
+        const block = out.join('\n');
+        ta.value = v.slice(0, lineStart) + block + v.slice(end);
+        if (a === b) { const d = out[0].length - lines[0].length; ta.selectionStart = ta.selectionEnd = Math.max(lineStart, a + d); }
+        else { ta.selectionStart = lineStart; ta.selectionEnd = lineStart + block.length; }
+      }
+      grow(); scheduleCommit();
+    });
     $('#ed-date').addEventListener('change', () => { readInputs(); edHead(); edMemory(); scheduleCommit(); });
     $('#ed-file').addEventListener('change', ev => { addPhotos([...ev.target.files]); ev.target.value = ''; });
     if (ed.isNew && autoLoc() && e.date === todayISO()) locate(true);
