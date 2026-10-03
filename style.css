@@ -501,3 +501,6 @@ img.missing { opacity: .35; }
 .ed-text, .rt, .c-text { tab-size: 4; -moz-tab-size: 4; }
 .locbox .wx { flex: 1 0 100%; color: var(--ink-2); font-size: 13.5px; }
 .bk small.bk-trip { color: var(--accent); font-weight: 600; margin-top: 3px; }
+.cal-year { position: relative; }
+.cal-review { position: absolute; right: 0; top: 50%; transform: translateY(-50%); background: var(--surface); }
+@media (max-width: 520px) { .cal-review span { display: none; } .cal-review { padding: 0 10px; } }

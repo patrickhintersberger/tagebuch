@@ -193,7 +193,8 @@
       <header class="cal-head">
         <div class="cal-year"><button class="icon-btn" data-act="cal-prev" aria-label="Vorheriges Jahr">${ms('chevron_left')}</button>
           <button class="cal-today" data-act="cal-today" title="Zu heute springen">${y}</button>
-          <button class="icon-btn" data-act="cal-next" aria-label="Nächstes Jahr">${ms('chevron_right')}</button></div>
+          <button class="icon-btn" data-act="cal-next" aria-label="Nächstes Jahr">${ms('chevron_right')}</button>
+          <button class="btn ghost small cal-review" data-act="week-review" title="Wochen-Review automatisch erstellen">${ms('description')}<span>Wochen-Review</span></button></div>
         <div class="cal-wd">${['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map(w => `<span>${w}</span>`).join('')}</div>
       </header>${months}</div>`;
     if (keep != null) main.scrollTop = keep;
@@ -491,7 +492,7 @@
     const keepStrip = ui.built === 'habits' ? ($('#hb-strip') || {}).scrollLeft : null;
     main.innerHTML = `<div class="page wide">
       <header class="page-head row"><div><h1>${sel === today ? 'Heute' : esc(fmtLong(sel))}</h1><p>Gewohnheiten</p></div>
-        <div class="row-btns">${sel !== today ? '<button class="btn ghost" data-act="hb-today">Heute</button>' : ''}<button class="btn ghost" data-act="week-review">${ms('description')} Wochen-Review</button><button class="btn" data-act="hb-new">${ms('add')} Gewohnheit</button></div></header>
+        <div class="row-btns">${sel !== today ? '<button class="btn ghost" data-act="hb-today">Heute</button>' : ''}<button class="btn" data-act="hb-new">${ms('add')} Gewohnheit</button></div></header>
       <div class="hb-strip" id="hb-strip">${strip}</div>
       ${habits.length ? `<div class="hb-list">${rows || '<p class="hint">An diesem Tag gab es noch keine Gewohnheiten.</p>'}</div>`
         : empty('task_alt', 'Noch keine Gewohnheiten', 'Lege deine erste Gewohnheit an, zum Beispiel „Wasser trinken“ mit 2500 ml am Tag.')}
