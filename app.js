@@ -63,15 +63,17 @@
     return line || 'Ohne Titel';
   }
   function snippet(e, max = 180) {
-    let t = (e.text || '').replace(/^#+\s*/gm, '').replace(/\*\*|~~/g, '').replace(/\n{2,}/g, '\n').trim();
+    let t = (e.text || '').replace(/^\s*#+\s*/gm, '').replace(/^(\s*)- \[[xX ]\] /gm, '$1').replace(/\*\*|~~/g, '').replace(/\n{2,}/g, '\n').trim();
     return t.length > max ? t.slice(0, max).trimEnd() + ' …' : t;
   }
   // Text mit einfacher Formatierung: "## Überschrift" und **fett**.
   function richText(text) {
     return esc(text || '').split('\n').map(l => {
-      const h = l.match(/^#{1,3}\s+(.*)$/);
-      if (h) return `<b class="rt-h">${h[1]}</b>`;
-      return l.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/~~(.+?)~~/g, '<s>$1</s>').replace(/^- /, '• ');
+      const h = l.match(/^(\t*)#{1,3}\s+(.*)$/);
+      if (h) return `${h[1]}<b class="rt-h">${h[2]}</b>`;
+      // Listen und Checkboxen (auch eingerückt, z.B. aus Notion)
+      return l.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/~~(.+?)~~/g, '<s>$1</s>')
+        .replace(/^(\s*)- \[[xX]\] /, '$1☑ ').replace(/^(\s*)- \[ \] /, '$1☐ ').replace(/^(\s*)- /, '$1• ');
     }).join('\n');
   }
 
