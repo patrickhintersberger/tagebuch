@@ -503,4 +503,4 @@ img.missing { opacity: .35; }
 .bk small.bk-trip { color: var(--accent); font-weight: 600; margin-top: 3px; }
 .cal-year { position: relative; }
 .cal-review { position: absolute; right: 0; top: 50%; transform: translateY(-50%); background: var(--surface); }
-@media (max-width: 520px) { .cal-review span { display: none; } .cal-review { padding: 0 10px; } }
+@media (max-width: 520px) { .cal-review span:not(.ms) { display: none; } .cal-review { padding: 0 10px; } }
