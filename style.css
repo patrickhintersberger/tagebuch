@@ -499,3 +499,5 @@ img.missing { opacity: .35; }
 .photos figure .mk-cover { left: 4px; right: auto; z-index: 1; }
 .photos figure .mk-cover .ms { color: #ffd34d; }
 .ed-text, .rt, .c-text { tab-size: 4; -moz-tab-size: 4; }
+.locbox .wx { flex: 1 0 100%; color: var(--ink-2); font-size: 13.5px; }
+.bk small.bk-trip { color: var(--accent); font-weight: 600; margin-top: 3px; }

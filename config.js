@@ -14,7 +14,7 @@ window.TB_CONFIG = {
 // Vorlagen, die beim ersten Start angelegt werden. Danach in der App unter Einstellungen → Vorlagen änderbar.
 window.TB_DEFAULT_TEMPLATES = [
   {
-    id: 'tpl-morgen', name: 'Morgenroutine', tags: ['Morgenroutine'],
+    id: 'tpl-morgen', name: 'Morgenroutine', tags: [],
     body: [
       '## Dankbarkeit',
       'Ich bin dankbar für …',
@@ -36,7 +36,7 @@ window.TB_DEFAULT_TEMPLATES = [
     ].join('\n'),
   },
   {
-    id: 'tpl-abend', name: 'Abendroutine', tags: ['Abendroutine'],
+    id: 'tpl-abend', name: 'Abendroutine', tags: [],
     body: [
       '## Highlights',
       'Drei gute Dinge, die heute passiert sind:',

@@ -1,6 +1,6 @@
 // Macht die App offline nutzbar: eigene Dateien zuerst aus dem Netz (damit Updates sofort ankommen),
 // sonst aus dem Zwischenspeicher. Bibliotheken und Schriften kommen direkt aus dem Zwischenspeicher.
-const CACHE = 'tagebuch-v15';
+const CACHE = 'tagebuch-v16';
 const LIBS = ['cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
 self.addEventListener('install', () => self.skipWaiting());
