@@ -409,7 +409,8 @@
   // Tageswert v: bei „Erreichen“ der Fortschritt (z.B. 1500 von 2500 ml), bei „Vermeiden“ die Menge (z.B. Minuten);
   // über dem Limit gilt der Tag als Ausrutscher.
   const HB_COLORS = ['#f6a5ad', '#8fe3cf', '#9ad4f5', '#43e0b5', '#b548e6', '#e884bd', '#f74c4c', '#9ebfd6', '#f5c451', '#7c8cf8'];
-  const mondayOf = s => { const d = parse(s); d.setDate(d.getDate() - (d.getDay() + 6) % 7); return iso(d); };
+  // Patricks Woche läuft von Sonntag bis Samstag
+  const mondayOf = s => { const d = parse(s); d.setDate(d.getDate() - d.getDay()); return iso(d); };
   const addDays = (s, n) => { const d = parse(s); d.setDate(d.getDate() + n); return iso(d); };
   function habitIndex() {
     const m = new Map();
@@ -447,7 +448,7 @@
   const hbProgress = (h, v) => h.kind === 'avoid' ? (h.target ? `${v || 0}/${h.target}${h.unit ? ' ' + h.unit : ''} Limit` : v ? `${v}× passiert` : 'Gehalten')
     : `${v || 0}/${h.target || 1}${h.unit ? ' ' + h.unit : ''}`;
 
-  // Stand einer Wochen-Gewohnheit in der Woche (Mo–So) eines Datums: erledigte Tage, Ziel, verbleibende Tage
+  // Stand einer Wochen-Gewohnheit in der Woche (So–Sa) eines Datums: erledigte Tage, Ziel, verbleibende Tage
   function hbWeek(h, days, date) {
     const mon = mondayOf(date), today = todayISO();
     let n = 0;
@@ -490,7 +491,7 @@
     const keepStrip = ui.built === 'habits' ? ($('#hb-strip') || {}).scrollLeft : null;
     main.innerHTML = `<div class="page wide">
       <header class="page-head row"><div><h1>${sel === today ? 'Heute' : esc(fmtLong(sel))}</h1><p>Gewohnheiten</p></div>
-        <div class="row-btns">${sel !== today ? '<button class="btn ghost" data-act="hb-today">Heute</button>' : ''}<button class="btn" data-act="hb-new">${ms('add')} Gewohnheit</button></div></header>
+        <div class="row-btns">${sel !== today ? '<button class="btn ghost" data-act="hb-today">Heute</button>' : ''}<button class="btn ghost" data-act="week-review">${ms('description')} Wochen-Review</button><button class="btn" data-act="hb-new">${ms('add')} Gewohnheit</button></div></header>
       <div class="hb-strip" id="hb-strip">${strip}</div>
       ${habits.length ? `<div class="hb-list">${rows || '<p class="hint">An diesem Tag gab es noch keine Gewohnheiten.</p>'}</div>`
         : empty('task_alt', 'Noch keine Gewohnheiten', 'Lege deine erste Gewohnheit an, zum Beispiel „Wasser trinken“ mit 2500 ml am Tag.')}
@@ -551,6 +552,96 @@
     const val = $('#hb-val');
     if (val) val.addEventListener('change', () => S.setLog(h.id, date, parseFloat(val.value) || 0));
   }
+
+  // ---------- Wochen-Review automatisch ----------
+  // Fasst eine Woche (Sonntag bis Samstag) aus Tagebuch, Orten, Gewohnheiten und Bucket-Liste zusammen
+  // und gibt regelbasiertes Feedback. Am Sonntag gilt die gerade beendete Woche.
+  function reviewWeekStart() { const t = todayISO(); return parse(t).getDay() === 0 ? addDays(t, -7) : mondayOf(t); }
+  function buildWeekReview(start) {
+    const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
+    const end = days[6], today = todayISO();
+    const past = days.filter(d => d <= today);
+    const short = d => parse(d).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+    const L = [];
+    // Tagebuch
+    const ents = S.entries.filter(e => e.date >= start && e.date <= end && !(e.tags || []).includes('Wochen-Review'));
+    const withEntry = new Set(ents.map(e => e.date));
+    const missing = past.filter(d => !withEntry.has(d));
+    const rated = ents.filter(e => e.rating);
+    L.push('## Tagebuch');
+    L.push(`- Einträge an ${withEntry.size} von ${past.length} Tagen${missing.length ? ` (ohne Eintrag: ${missing.map(d => WD[parse(d).getDay()] + ' ' + short(d)).join(', ')})` : ''}`);
+    if (rated.length) {
+      const avg = rated.reduce((n, e) => n + e.rating, 0) / rated.length;
+      const best = rated.reduce((a, b) => b.rating > a.rating ? b : a), worst = rated.reduce((a, b) => b.rating < a.rating ? b : a);
+      L.push(`- Bewertung im Schnitt ${avg.toFixed(1).replace('.', ',')} von 10 (bester Tag: ${WD[parse(best.date).getDay()]} mit ${best.rating}${worst !== best ? `, schwächster: ${WD[parse(worst.date).getDay()]} mit ${worst.rating}` : ''})`);
+    }
+    const places = [...new Set(ents.filter(e => e.loc && e.loc.name).map(e => e.loc.name.split(',').slice(-2).map(x => x.trim()).join(', ')))];
+    if (places.length) L.push(`- Orte: ${places.join(' · ')}`);
+    const tagc = new Map(); ents.forEach(e => (e.tags || []).forEach(t => tagc.set(t, (tagc.get(t) || 0) + 1)));
+    if (tagc.size) L.push(`- Tags: ${[...tagc].map(([t, n]) => n > 1 ? `${t} (${n}×)` : t).join(', ')}`);
+    // Gewohnheiten
+    const idx = habitIndex();
+    const good = [], weak = [], notes = [];
+    L.push('', '## Gewohnheiten');
+    S.habits.filter(h => !h.archived && hbStart(h) <= end).forEach(h => {
+      const dv = idx.get(h.id) || new Map();
+      const act = past.filter(d => d >= hbStart(h));
+      if (!act.length) return;
+      const okDays = act.filter(d => hbDone(h, dv.get(d))).length;
+      const prev = days.map(d => addDays(d, -7)).filter(d => d >= hbStart(h));
+      const prevOk = prev.filter(d => hbDone(h, dv.get(d))).length;
+      const unitPrev = h.kind === 'avoid' ? `${prevOk} Tage gehalten` : hbDaily(h) ? `${prevOk} Tage` : `${prevOk}×`;
+      const trend = prev.length ? (okDays - prevOk > 0 ? ` (besser als Vorwoche: ${unitPrev})` : okDays - prevOk < 0 ? ` (schlechter als Vorwoche: ${unitPrev})` : ' (wie Vorwoche)') : '';
+      const st = hbStreak(h, dv, today);
+      const streak = st.n > 1 ? ` · Serie ${st.n} ${st.unit}` : '';
+      if (h.kind === 'avoid') {
+        const slips = act.length - okDays;
+        L.push(`- ${h.icon || ''} ${h.name}: ${okDays} von ${act.length} Tagen gehalten${slips ? `, ${slips} Ausrutscher` : ''}${trend}${streak}`);
+        (slips ? weak : good).push(h.name);
+        if (slips >= 2) notes.push(`${h.name}: ${slips} Ausrutscher. Was war an diesen Tagen anders?`);
+      } else if (!hbDaily(h)) {
+        const goal = h.perWeek;
+        L.push(`- ${h.icon || ''} ${h.name}: ${okDays} von ${goal}× ${okDays >= goal ? '✓' : '✗'}${trend}${streak}`);
+        (okDays >= goal ? good : weak).push(h.name);
+        if (okDays < goal) notes.push(`${h.name}: Wochenziel ${goal}× verfehlt (${okDays}×). Feste Tage im Kalender blocken.`);
+      } else {
+        const pct = Math.round(okDays / act.length * 100);
+        let extra = '';
+        if ((h.target || 1) > 1) {
+          const vals = act.map(d => dv.get(d) || 0), avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+          extra = ` · Schnitt ${Math.round(avg).toLocaleString('de-DE')} von ${(+h.target).toLocaleString('de-DE')}${h.unit ? ' ' + h.unit : ''}`;
+        }
+        L.push(`- ${h.icon || ''} ${h.name}: ${okDays} von ${act.length} Tagen (${pct} %)${extra}${trend}${streak}`);
+        (pct === 100 ? good : pct < 70 ? weak : []).push(h.name);
+        if (pct < 70) notes.push(`${h.name}: nur ${okDays} von ${act.length} Tagen. An eine feste Uhrzeit oder Gewohnheit koppeln.`);
+      }
+    });
+    // Feedback
+    L.push('', '## Feedback');
+    if (good.length) L.push(`- Stark: ${good.join(', ')}`);
+    if (weak.length) L.push(`- Mehr Aufmerksamkeit: ${weak.join(', ')}`);
+    notes.forEach(n => L.push('- ' + n));
+    if (missing.length >= 2) L.push(`- ${missing.length} Tage ohne Tagebucheintrag. Für den Länderzähler zählt jeder Tag mit Ort.`);
+    if (!good.length && !weak.length && !notes.length) L.push('- Keine Gewohnheitsdaten für diese Woche.');
+    // Vorschläge
+    const sug = bucketSuggestions(3);
+    L.push('', '## Für nächste Woche');
+    if (weak.length) L.push(`- Fokus-Gewohnheit: ${weak[0]}`);
+    sug.forEach(({ b, reason }) => L.push(`- Bucket-Liste: ${b.title} (${reason})`));
+    L.push('', '## Meine Gedanken', 'Was lief diese Woche gut?', '', '', 'Was nehme ich mit?', '', '', 'Die drei wichtigsten Ziele für nächste Woche:', '1. ', '2. ', '3. ', '');
+    return { title: `Wochen-Review ${short(start)}–${short(end)}`, text: L.join('\n'), date: end > today ? today : end };
+  }
+  function createWeekReview() {
+    const r = buildWeekReview(reviewWeekStart());
+    const old = S.entries.find(e => e.title === r.title && (e.tags || []).includes('Wochen-Review'));
+    if (old && !confirm('Für diese Woche gibt es schon ein Wochen-Review. Ein neues anlegen?')) return openEditor(old.id);
+    const now = new Date();
+    const e = S.saveEntry({ date: r.date, time: `${pad(now.getHours())}:${pad(now.getMinutes())}`, title: r.title, text: r.text, rating: null, tags: ['Wochen-Review'], loc: null, photos: [] });
+    if (!$('#overlay').hidden && !ed) { $('#overlay').hidden = true; $('#overlay').innerHTML = ''; }
+    openEditor(e.id);
+    toast('Wochen-Review erstellt');
+  }
+  window.TB_buildWeekReview = buildWeekReview;
 
   // ---------- Pflege-Check ----------
   // Prüft die letzten 30 Tage: Tage ohne Eintrag, Einträge ohne Ort (wichtig für den Länderzähler) und offene Gewohnheiten.
@@ -1476,6 +1567,7 @@
     'hb-toggle': el => toggleHabit(el.dataset.id),
     'hb-open': el => openHabit(el.dataset.id),
     'hb-new': () => openHabit(null),
+    'week-review': () => { if (ed) { $('#ed-tplmenu').hidden = true; closeEditor(); } createWeekReview(); },
     'hb-delete': el => { if (!confirm('Diese Gewohnheit löschen? Die bisherigen Tageswerte bleiben gespeichert.')) return; S.deleteHabit(el.dataset.id); closeSettings(); },
     'hb-step': el => {
       const h = S.habit(hbEdit); if (!h) return;
@@ -1546,7 +1638,7 @@
       const m = $('#ed-tplmenu');
       if (!m.hidden) { m.hidden = true; return; }
       const list = S.templates;
-      m.innerHTML = list.length ? list.map(t => `<button data-act="ed-tpl" data-id="${esc(t.id)}">${ms('description')}${esc(t.name)}</button>`).join('') + `<button data-act="ed-bucket">${ms('flag')}Bucket-Vorschläge einfügen</button>` : '<p class="hint">Keine Vorlagen vorhanden. Lege sie in den Einstellungen an.</p>';
+      m.innerHTML = list.length ? list.map(t => `<button data-act="ed-tpl" data-id="${esc(t.id)}">${ms('description')}${esc(t.name)}</button>`).join('') + `<button data-act="ed-bucket">${ms('flag')}Bucket-Vorschläge einfügen</button><button data-act="week-review">${ms('task_alt')}Wochen-Review automatisch erstellen</button>` : '<p class="hint">Keine Vorlagen vorhanden. Lege sie in den Einstellungen an.</p>';
       m.hidden = false;
     },
     'ed-tpl': el => { $('#ed-tplmenu').hidden = true; const t = S.template(el.dataset.id); if (t) insertTemplate(t); },
