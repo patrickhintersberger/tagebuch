@@ -445,6 +445,15 @@
   const hbProgress = (h, v) => h.kind === 'avoid' ? (h.target ? `${v || 0}/${h.target}${h.unit ? ' ' + h.unit : ''} Limit` : v ? `${v}× passiert` : 'Gehalten')
     : `${v || 0}/${h.target || 1}${h.unit ? ' ' + h.unit : ''}`;
 
+  // Stand einer Wochen-Gewohnheit in der Woche (Mo–So) eines Datums: erledigte Tage, Ziel, verbleibende Tage
+  function hbWeek(h, days, date) {
+    const mon = mondayOf(date), today = todayISO();
+    let n = 0;
+    for (let i = 0; i < 7; i++) { const d = addDays(mon, i); if (d <= today && hbDone(h, days.get(d))) n++; }
+    const goal = h.perWeek || 7;
+    const left = mon > today ? 7 : Math.max(0, 7 - Math.round((parse(today) - parse(mon)) / 864e5)); // Tage inkl. heute
+    return { n, goal, left, met: n >= goal, risk: n < goal && goal - n >= left - 1 };
+  }
   function viewHabits(main) {
     const habits = S.habits.filter(h => !h.archived);
     const idx = habitIndex();
@@ -460,7 +469,14 @@
       const v = days.get(sel) || 0;
       const done = hbDone(h, v);
       const st = hbStreak(h, days, today);
-      const extra = !hbDaily(h) && done ? '<i>Extra Tag</i>' : '';
+      let extra = '';
+      if (!hbDaily(h)) {
+        // Wochen-Gewohnheit: zeigen, wie oft sie diese Woche schon erledigt ist
+        const w = hbWeek(h, days, sel);
+        extra = `<i class="${w.met ? 'wk-ok' : w.risk && sel === today ? 'wk-risk' : ''}">${w.met ? '✓ ' : ''}${w.n}/${w.goal} diese Woche</i>`
+          + (done && w.n > w.goal ? '<i>Extra Tag</i>' : '')
+          + (!w.met && sel === today ? `<em>noch ${w.goal - w.n}× in ${w.left} ${w.left === 1 ? 'Tag' : 'Tagen'}</em>` : '');
+      }
       const slip = h.kind === 'avoid';
       return `<div class="hb ${slip ? (done ? 'done' : 'slip') : done ? 'done' : ''}" style="--hc:${esc(h.color || HB_COLORS[0])}" data-act="hb-open" data-id="${esc(h.id)}" tabindex="0">
         <span class="hb-ico">${esc(h.icon || '✅')}</span>
@@ -548,7 +564,9 @@
       if (!have.has(d)) missing.push(d); else if (!located.has(d)) noLoc.push(d);
     }
     const idx = habitIndex();
-    const open = S.habits.filter(h => !h.archived && h.kind !== 'avoid' && hbDaily(h) && hbStart(h) <= today && !hbDone(h, (idx.get(h.id) || new Map()).get(today)));
+    const open = S.habits.filter(h => !h.archived && h.kind !== 'avoid' && hbStart(h) <= today && (hbDaily(h)
+      ? !hbDone(h, (idx.get(h.id) || new Map()).get(today))
+      : !hbDone(h, (idx.get(h.id) || new Map()).get(today)) && hbWeek(h, idx.get(h.id) || new Map(), today).risk)); // Wochen-Ziel wird knapp
     const todayMissing = have.size > 0 && !have.has(today);
     const todayNoLoc = have.has(today) && !located.has(today);
     const count = missing.length + noLoc.length + (todayMissing || todayNoLoc ? 1 : 0);
