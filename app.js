@@ -1096,9 +1096,13 @@
       const ta = ev.target, v = ta.value;
       let a = ta.selectionStart, b = ta.selectionEnd;
       const lineStart = v.lastIndexOf('\n', a - 1) + 1;
+      const body = $('.sheet-body'), y = body.scrollTop;
       if (a === b && !ev.shiftKey) {
-        ta.value = v.slice(0, a) + '\t' + v.slice(b);
-        ta.selectionStart = ta.selectionEnd = a + 1;
+        // wie normales Tippen: bleibt an Ort und Stelle und lässt sich mit ⌘Z rückgängig machen
+        if (!document.execCommand || !document.execCommand('insertText', false, '\t')) {
+          ta.value = v.slice(0, a) + '\t' + v.slice(b);
+          ta.selectionStart = ta.selectionEnd = a + 1;
+        }
       } else {
         const end = b > a && v[b - 1] === '\n' ? b - 1 : b;
         const lines = v.slice(lineStart, end).split('\n');
@@ -1108,6 +1112,7 @@
         if (a === b) { const d = out[0].length - lines[0].length; ta.selectionStart = ta.selectionEnd = Math.max(lineStart, a + d); }
         else { ta.selectionStart = lineStart; ta.selectionEnd = lineStart + block.length; }
       }
+      body.scrollTop = y;
       grow(); scheduleCommit();
     });
     $('#ed-date').addEventListener('change', () => { readInputs(); edHead(); edMemory(); if (ed.entry.wx && ed.entry.wx !== wxKey(ed.entry)) { delete ed.entry.weather; delete ed.entry.wx; edLoc(); } updateWeather(); scheduleCommit(); });
@@ -1124,7 +1129,9 @@
     }
     if (ed.isNew && !('ontouchstart' in window)) $('#ed-text').focus();
   }
-  function grow() { const t = $('#ed-text'); if (!t) return; t.style.height = 'auto'; t.style.height = Math.max(180, t.scrollHeight + 4) + 'px'; }
+  // Text-Ersetzungen und Höhenanpassung verschieben sonst die Scrollposition des Eintrags
+  function keepScroll(fn) { const b = $('.sheet-body'), y = b ? b.scrollTop : 0; fn(); if (b) b.scrollTop = y; }
+  function grow() { const t = $('#ed-text'); if (!t) return; keepScroll(() => { t.style.height = 'auto'; t.style.height = Math.max(180, t.scrollHeight + 4) + 'px'; }); }
   function readInputs() {
     if (!ed) return;
     const e = ed.entry;
@@ -1341,8 +1348,10 @@
     }
     const part = v.slice(a, b);
     const out = part.includes(STRIKE) ? part.replace(/̶/g, '') : [...part].map(ch => /\s/.test(ch) && ch !== ' ' ? ch : ch + STRIKE).join('');
-    ta.value = v.slice(0, a) + out + v.slice(b);
-    ta.focus({ preventScroll: true }); ta.setSelectionRange(a, a + out.length);
+    keepScroll(() => {
+      ta.value = v.slice(0, a) + out + v.slice(b);
+      ta.focus({ preventScroll: true }); ta.setSelectionRange(a, a + out.length);
+    });
     grow(); scheduleCommit();
   }
 
