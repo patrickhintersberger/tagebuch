@@ -504,3 +504,5 @@ img.missing { opacity: .35; }
 .cal-year { position: relative; }
 .cal-review { position: absolute; right: 0; top: 50%; transform: translateY(-50%); background: var(--surface); }
 @media (max-width: 520px) { .cal-review span:not(.ms) { display: none; } .cal-review { padding: 0 10px; } }
+.sheet { position: relative; }
+.ed-menu { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 60px); right: 12px; z-index: 20; max-height: 70vh; overflow-y: auto; }

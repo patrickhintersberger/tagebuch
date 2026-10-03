@@ -147,7 +147,7 @@
     $('#tl-tags').innerHTML = tags.map(([t, n]) => `<button class="chip" data-act="tag" data-tag="${esc(t)}" aria-pressed="${ui.tag === t}">${esc(t)} <span class="count">${n}</span></button>`).join('');
     const q = ui.q.trim().toLowerCase();
     const list = all.filter(e => (!ui.tag || (e.tags || []).includes(ui.tag)) &&
-      (!q || [e.title, e.text, e.loc && e.loc.name, (e.tags || []).join(' ')].join(' ').toLowerCase().includes(q)));
+      (!q || [e.title, e.text, e.loc && e.loc.name, (e.tags || []).join(' ')].join(' ').replace(/\u0336/g, '').toLowerCase().includes(q)));
     $('#tl-count').textContent = all.length ? `${all.length} ${all.length === 1 ? 'Eintrag' : 'Einträge'}` : '';
     $('#tl-memory').innerHTML = !q && !ui.tag ? memoryBlock(todayISO(), true) : '';
     const box = $('#tl-list');
@@ -1003,7 +1003,8 @@
         try { if (!localStorage.getItem('rk-token') && localStorage.getItem('tb-token')) localStorage.setItem('rk-token', localStorage.getItem('tb-token')); } catch {}
         const f = document.createElement('iframe');
         f.title = 'Reisekarte'; f.allow = 'geolocation';
-        f.src = /github\.io$/.test(location.hostname) ? '/reisekarte/' : 'https://patrickhintersberger.github.io/reisekarte/';
+        // Zeitstempel im Link, damit nie eine alte Version aus dem Zwischenspeicher kommt
+        f.src = (/github\.io$/.test(location.hostname) ? '/reisekarte/' : 'https://patrickhintersberger.github.io/reisekarte/') + '?t=' + Date.now();
         $('#travelview').appendChild(f);
       }
     } else if (isMap) { if ($('#mapview').hidden) showMap(); else refreshMap(); }
@@ -1062,12 +1063,13 @@
       <header class="sheet-head">
         <button class="icon-btn" data-act="ed-close" aria-label="Zurück">${ms('arrow_back')}</button>
         <b id="ed-head"></b>
+        <button class="icon-btn" data-act="ed-strike" data-keepfocus aria-label="Durchstreichen" title="Durchstreichen (⌘ Umschalt X)">${ms('format_strikethrough')}</button>
         <button class="icon-btn" data-act="ed-templates" aria-label="Vorlage einfügen" title="Vorlage einfügen">${ms('description')}</button>
         <button class="icon-btn" data-act="ed-delete" aria-label="Eintrag löschen" title="Löschen">${ms('delete')}</button>
         <button class="btn" data-act="ed-close">Fertig</button>
       </header>
+      <div id="ed-tplmenu" class="menu ed-menu" hidden></div>
       <div class="sheet-body">
-        <div id="ed-tplmenu" class="menu" hidden></div>
         <div class="ed-when"><input type="date" id="ed-date" value="${esc(e.date)}" aria-label="Datum"><input type="time" id="ed-time" value="${esc(e.time || '')}" aria-label="Uhrzeit"></div>
         <input id="ed-title" class="ed-title" type="text" placeholder="Titel" value="${esc(e.title)}" autocomplete="off">
         <textarea id="ed-text" class="ed-text" placeholder="Was ist heute passiert?">${esc(e.text)}</textarea>
@@ -1084,6 +1086,10 @@
     ['ed-title', 'ed-text', 'ed-time'].forEach(i => $('#' + i).addEventListener('input', () => { if (i === 'ed-text') grow(); scheduleCommit(); }));
     // Tab rückt im Text ein (statt zum nächsten Feld zu springen), Umschalt+Tab nimmt den Einzug zurück.
     // Mit markierten Zeilen gilt das für alle markierten Zeilen.
+    ['focus', 'click', 'keyup'].forEach(t => $('#ed-text').addEventListener(t, () => { if (ed) ed.caretSet = true; }));
+    $('#ed-text').addEventListener('keydown', ev => {
+      if ((ev.metaKey || ev.ctrlKey) && ev.shiftKey && (ev.key === 'x' || ev.key === 'X')) { ev.preventDefault(); strikeText(); }
+    });
     $('#ed-text').addEventListener('keydown', ev => {
       if (ev.key !== 'Tab' || ev.altKey || ev.ctrlKey || ev.metaKey) return;
       ev.preventDefault();
@@ -1290,17 +1296,54 @@
       } catch (err) { toast(err.message || 'Bild konnte nicht hinzugefügt werden.'); }
     }
   }
+  // Scrollt den Eintrag so, dass die Textstelle pos sichtbar ist (Textfeld wächst mit, scrollt also nicht selbst)
+  function scrollToText(pos) {
+    const ta = $('#ed-text'), body = $('.sheet-body'); if (!ta || !body) return;
+    const cs = getComputedStyle(ta), m = document.createElement('div');
+    ['fontFamily', 'fontSize', 'lineHeight', 'letterSpacing', 'paddingTop', 'paddingLeft', 'paddingRight', 'tabSize'].forEach(k => m.style[k] = cs[k]);
+    Object.assign(m.style, { position: 'absolute', visibility: 'hidden', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', width: ta.clientWidth + 'px', left: '-9999px', top: 0 });
+    m.textContent = ta.value.slice(0, pos) + '​';
+    document.body.appendChild(m);
+    const y = m.offsetHeight; m.remove();
+    body.scrollTop = ta.offsetTop + y - 120;
+  }
   function insertTemplate(t) {
     const ta = $('#ed-text');
-    const start = ta.selectionStart == null ? ta.value.length : ta.selectionStart;
-    const before = ta.value.slice(0, start), after = ta.value.slice(ta.selectionEnd == null ? start : ta.selectionEnd);
+    // Hat der Nutzer den Cursor nicht selbst gesetzt, kommt die Vorlage ans Ende (z.B. Abendroutine unter die Morgenroutine)
+    const start = ed && ed.caretSet && ta.selectionStart != null ? ta.selectionStart : ta.value.length;
+    const end = ed && ed.caretSet && ta.selectionEnd != null ? ta.selectionEnd : start;
+    const before = ta.value.slice(0, start), after = ta.value.slice(end);
     const lead = before && !before.endsWith('\n\n') ? (before.endsWith('\n') ? '\n' : '\n\n') : '';
     ta.value = before + lead + t.body + (after && !t.body.endsWith('\n') ? '\n' : '') + after;
     if (!$('#ed-title').value.trim() && t.name) $('#ed-title').value = t.name;
     (t.tags || []).forEach(addTag);
     edTags(); grow(); scheduleCommit();
-    const pos = (before + lead + t.body).length;
-    ta.focus(); ta.setSelectionRange(pos, pos);
+    const first = (before + lead).length, pos = (before + lead + t.body).length;
+    // Cursor in die erste leere Zeile der Vorlage setzen, sonst ans Ende der Vorlage
+    const blank = ta.value.slice(first, pos).search(/\n\n|\n(?:\d+\. |- )\n|\n$/);
+    const caret = blank >= 0 ? first + blank + 1 : pos;
+    ta.focus({ preventScroll: true }); ta.setSelectionRange(caret, caret);
+    ed.caretSet = true;
+    requestAnimationFrame(() => scrollToText(first));
+  }
+  // Durchstreichen: markierter Text, sonst die aktuelle Zeile (ohne Einzug und Aufzählungszeichen).
+  // Genutzt wird ein Unicode-Durchstrich, damit es auch direkt im Textfeld durchgestrichen aussieht.
+  const STRIKE = '̶';
+  function strikeText() {
+    const ta = $('#ed-text'); if (!ta) return;
+    let a = ta.selectionStart, b = ta.selectionEnd;
+    const v = ta.value;
+    if (a === b) {
+      const ls = v.lastIndexOf('\n', a - 1) + 1, le = v.indexOf('\n', a) < 0 ? v.length : v.indexOf('\n', a);
+      const lead = v.slice(ls, le).match(/^\s*(?:[-•*]\s+|\d+\.\s+|\[[ xX]\]\s+)*/)[0].length;
+      a = ls + lead; b = le;
+      if (a >= b) return;
+    }
+    const part = v.slice(a, b);
+    const out = part.includes(STRIKE) ? part.replace(/̶/g, '') : [...part].map(ch => /\s/.test(ch) && ch !== ' ' ? ch : ch + STRIKE).join('');
+    ta.value = v.slice(0, a) + out + v.slice(b);
+    ta.focus({ preventScroll: true }); ta.setSelectionRange(a, a + out.length);
+    grow(); scheduleCommit();
   }
 
   // ---------- Import aus Diarium ----------
@@ -1633,6 +1676,7 @@
     'ed-loc-clear': () => { ed.entry.loc = null; delete ed.entry.weather; delete ed.entry.wx; edLoc(); scheduleCommit(); },
     'ed-loc-pick': el => setLoc(el.dataset.lat, el.dataset.lng, el.dataset.name),
     'ed-photo-add': () => $('#ed-file').click(),
+    'ed-strike': () => strikeText(),
     'ed-photo-cover': el => { const ph = ed.entry.photos; const i = ph.findIndex(p => p.id === el.dataset.id); if (i > 0) { ph.unshift(ph.splice(i, 1)[0]); edPhotos(); scheduleCommit(); toast('Titelbild geändert'); } },
     'ed-photo-del': el => { ed.entry.photos = ed.entry.photos.filter(p => p.id !== el.dataset.id); edPhotos(); scheduleCommit(); },
     'ed-templates': () => {
@@ -1667,6 +1711,7 @@
     const fn = actions[el.dataset.act];
     if (fn) { if (el.tagName === 'BUTTON' && el.type !== 'submit') ev.preventDefault(); fn(el); }
   });
+  document.addEventListener('mousedown', ev => { if (ev.target.closest('[data-keepfocus]')) ev.preventDefault(); });
   document.addEventListener('keydown', ev => {
     if (ev.key === 'Escape') {
       if (!$('#lightbox').hidden) closeLightbox();
