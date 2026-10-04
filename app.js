@@ -1026,7 +1026,7 @@
 
   // ---------- Rahmen ----------
   const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags, countries: viewCountries, habits: viewHabits, bucket: viewBucket, life: viewLife, finanzen: main => { window.TB_FINANZEN.view(main); ui.built = 'finanzen'; }, templates: viewTemplates, share: viewShare };
-  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', travel: 'Reisekarte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten', bucket: 'Bucket-Liste', life: 'Das große Ganze', finanzen: 'Finanzen', templates: 'Vorlagen', share: 'Reisen freigeben' };
+  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', travel: 'Reisekarte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten', bucket: 'Bucket-Liste', life: 'Lebenszeit', finanzen: 'Finanzen', templates: 'Vorlagen', share: 'Reisen freigeben' };
   function render() {
     $$('#nav [data-nav]').forEach(b => b.setAttribute('aria-current', b.dataset.nav === ui.view ? 'page' : 'false'));
     const isMap = ui.view === 'map';
