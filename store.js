@@ -14,6 +14,8 @@
     logs: {},       // id (Gewohnheit_Datum) -> Tageswert einer Gewohnheit
     bucket: {},     // id -> Ziel der Bucket-Liste (id '_profile' = Geburtsdatum)
     push: {},       // id -> Gerät, das die tägliche Erinnerung bekommt (Push-Abo)
+    finance: {},    // id -> Buchung (Finanzen), Datei je Jahr: data/f2026.json
+    fmeta: {},      // id -> Kategorie-Regel bzw. Einstellung der Finanzen, Datei data/fmeta.json
     pending: [],    // Bild-IDs, die noch hochgeladen werden müssen
     pendingThumbs: [], // nur das Vorschaubild muss noch hochgeladen werden (nachträglich erzeugt)
     shas: {},       // Dateischlüssel ('2026', 'templates') -> zuletzt bekannter Stand im Repo
@@ -72,6 +74,8 @@
       store.logs = s.logs || {};
       store.push = s.push || {};
       store.bucket = s.bucket || {};
+      store.finance = s.finance || {};
+      store.fmeta = s.fmeta || {};
       store.pending = s.pending || [];
       store.pendingThumbs = s.pendingThumbs || [];
       store.shas = s.shas || {};
@@ -83,7 +87,7 @@
     });
   }
   function saveLocal() {
-    return idbSet('kv', 'state', { entries: store.entries, templates: store.templates, habits: store.habits, logs: store.logs, push: store.push, bucket: store.bucket, pending: store.pending, pendingThumbs: store.pendingThumbs, shas: store.shas, dirty: store.dirty });
+    return idbSet('kv', 'state', { entries: store.entries, templates: store.templates, habits: store.habits, logs: store.logs, push: store.push, bucket: store.bucket, finance: store.finance, fmeta: store.fmeta, pending: store.pending, pendingThumbs: store.pendingThumbs, shas: store.shas, dirty: store.dirty });
   }
 
   let saveTimer = null;
@@ -143,23 +147,28 @@
       habits: Object.values(store.habits),
       logs: Object.values(store.logs),
       bucket: Object.values(store.bucket),
+      finance: Object.values(store.finance).sort(byWhen),
+      fmeta: Object.values(store.fmeta),
     }, null, 1);
   }
 
   // ---------- Aufteilung in Dateien ----------
   const yearOf = e => (e.date || '0000').slice(0, 4);
-  // Dateischlüssel -> Sammlung: 'templates', 'habits', '2026' (Einträge), 'h2026' (Gewohnheits-Tageswerte)
-  const collOf = key => key === 'templates' || key === 'habits' || key === 'push' || key === 'bucket' ? key : key[0] === 'h' ? 'logs' : 'entries';
+  // Dateischlüssel -> Sammlung: 'templates', 'habits', '2026' (Einträge), 'h2026' (Gewohnheits-Tageswerte),
+  // 'f2026' (Buchungen der Finanzen), 'fmeta' (Kategorie-Regeln). Wichtig: 'f…' vor dem Rückfall auf Einträge abfangen.
+  const SINGLE = ['templates', 'habits', 'push', 'bucket', 'fmeta'];
+  const collOf = key => SINGLE.includes(key) ? key : key[0] === 'h' ? 'logs' : key[0] === 'f' ? 'finance' : 'entries';
   function bucket(key) {
     const c = collOf(key);
-    if (c === 'templates' || c === 'habits' || c === 'push' || c === 'bucket') return Object.values(store[c]);
+    if (SINGLE.includes(c)) return Object.values(store[c]);
     if (c === 'logs') return Object.values(store.logs).filter(l => 'h' + yearOf(l) === key);
+    if (c === 'finance') return Object.values(store.finance).filter(f => 'f' + yearOf(f) === key);
     return Object.values(store.entries).filter(e => yearOf(e) === key);
   }
-  function bucketKeys() { return [...new Set(['templates', 'habits', 'push', 'bucket', ...Object.values(store.entries).map(yearOf), ...Object.values(store.logs).map(l => 'h' + yearOf(l))])]; }
+  function bucketKeys() { return [...new Set([...SINGLE, ...Object.values(store.entries).map(yearOf), ...Object.values(store.logs).map(l => 'h' + yearOf(l)), ...Object.values(store.finance).map(f => 'f' + yearOf(f))])]; }
   function fileBody(key) {
     const c = collOf(key);
-    const items = c === 'entries' ? bucket(key).sort(byWhen) : bucket(key).sort((x, y) => String(x.name || x.id).localeCompare(String(y.name || y.id)));
+    const items = c === 'entries' || c === 'finance' ? bucket(key).sort(byWhen) : bucket(key).sort((x, y) => String(x.name || x.id).localeCompare(String(y.name || y.id)));
     return JSON.stringify({ version: 1, ...(c === 'entries' ? { year: key } : {}), [c]: items }, null, 1);
   }
   const revs = {}; // zählt Änderungen je Datei, damit Änderungen während eines Uploads nicht verloren gehen
@@ -211,7 +220,7 @@
     if (!res.ok) throw new Error(`GitHub antwortet mit Fehler ${res.status}.`);
     const list = await res.json();
     const out = {};
-    (Array.isArray(list) ? list : []).forEach(f => { const m = /^(templates|habits|push|bucket|h?\d{4})\.json$/.exec(f.name); if (m) out[m[1]] = f.sha; });
+    (Array.isArray(list) ? list : []).forEach(f => { const m = /^(templates|habits|push|bucket|fmeta|[hf]?\d{4})\.json$/.exec(f.name); if (m) out[m[1]] = f.sha; });
     return out;
   }
 
@@ -591,6 +600,45 @@
       markDirty('push');
       emit(); schedulePush();
     },
+    // ---------- Finanzen ----------
+    get finance() { return Object.values(store.finance).filter(f => !f.deleted); },
+    get fmeta() { return Object.values(store.fmeta).filter(m => !m.deleted); },
+    // Viele Buchungen auf einmal (Import): vorhandene IDs werden nur überschrieben, wenn replace gesetzt ist.
+    saveFinance(list, replace) {
+      const now = Date.now();
+      let n = 0;
+      for (const f of list) {
+        if (!f.id || !f.date) continue;
+        const old = store.finance[f.id];
+        if (old && !old.deleted && !replace) continue;
+        store.finance[f.id] = { createdAt: (old && old.createdAt) || now, ...f, updatedAt: now };
+        markDirty('f' + yearOf(f));
+        n++;
+      }
+      if (n) { emit(); schedulePush(); }
+      return n;
+    },
+    deleteFinance(id) {
+      const old = store.finance[id];
+      if (!old) return;
+      store.finance[id] = { id, date: old.date, deleted: true, updatedAt: Date.now() };
+      markDirty('f' + yearOf(old));
+      emit(); schedulePush();
+    },
+    saveFmeta(m) {
+      const now = Date.now();
+      const item = { createdAt: now, ...m, updatedAt: now };
+      if (!item.id) item.id = uid();
+      store.fmeta[item.id] = item;
+      markDirty('fmeta');
+      emit(); schedulePush();
+      return item;
+    },
+    deleteFmeta(id) {
+      store.fmeta[id] = { id, deleted: true, updatedAt: Date.now() };
+      markDirty('fmeta');
+      emit(); schedulePush();
+    },
     deleteTemplate(id) {
       store.templates[id] = { id, deleted: true, updatedAt: Date.now() };
       markDirty('templates');
@@ -605,6 +653,8 @@
       (data.bucket || []).forEach(b => { if (b && b.id && !store.bucket[b.id]) { store.bucket[b.id] = { ...b, updatedAt: now }; markDirty('bucket'); } });
       (data.habits || []).forEach(h => { if (h && h.id && !store.habits[h.id]) { store.habits[h.id] = { ...h, updatedAt: now }; markDirty('habits'); } });
       (data.logs || []).forEach(l => { if (l && l.id && l.date && !store.logs[l.id]) { store.logs[l.id] = { ...l, updatedAt: now }; markDirty('h' + yearOf(l)); } });
+      (data.finance || []).forEach(f => { if (f && f.id && f.date && !store.finance[f.id]) { store.finance[f.id] = { ...f, updatedAt: now }; markDirty('f' + yearOf(f)); } });
+      (data.fmeta || []).forEach(m => { if (m && m.id && !store.fmeta[m.id]) { store.fmeta[m.id] = { ...m, updatedAt: now }; markDirty('fmeta'); } });
       emit(); schedulePush();
       return n;
     },

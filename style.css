@@ -507,3 +507,37 @@ img.missing { opacity: .35; }
 @media (max-width: 520px) { .cal-review span:not(.ms) { display: none; } .cal-review { padding: 0 10px; } }
 .sheet { position: relative; }
 .ed-menu { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 60px); right: 12px; z-index: 20; max-height: 70vh; overflow-y: auto; }
+
+/* ---------- Finanzen ---------- */
+.fin .page-head.row { align-items: flex-end; }
+.fin-import { cursor: pointer; }
+.fin-msg { background: var(--accent-soft); color: var(--ink); border-radius: 10px; padding: 10px 12px; margin: 0 0 12px; font-size: 14px; }
+.fin-years, .fin-months { margin-bottom: 8px; }
+.fin-kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 12px 0 6px; }
+@media (min-width: 640px) { .fin-kpis { grid-template-columns: repeat(4, 1fr); } }
+.fin-kpis > div { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 14px; display: flex; flex-direction: column; }
+.fin-kpis span { color: var(--ink-2); font-size: 13px; }
+.fin-kpis b { font-size: 21px; font-variant-numeric: tabular-nums; }
+.fin-kpis small { color: var(--ink-3); font-size: 12.5px; }
+.fin-kpis .ok { color: var(--ok); } .fin-kpis .bad { color: var(--danger); }
+.fin-table table { border-collapse: collapse; font-size: 12.5px; min-width: 1060px; width: 100%; font-variant-numeric: tabular-nums; }
+.fin-table th, .fin-table td { padding: 5px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+.fin-table tbody th { text-align: left; font-weight: 500; position: sticky; left: 0; background: var(--surface); max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.fin-table thead th { color: var(--ink-2); font-weight: 600; }
+.fin-table thead small { display: block; font-size: 10px; font-weight: 400; color: var(--ink-3); }
+.fin-table tr.grp th { padding-top: 12px; color: var(--accent); font-weight: 700; }
+.fin-table tr.tot th, .fin-table tr.tot td { font-weight: 700; }
+.fin-table td.sum, .fin-table td.avg { font-weight: 600; }
+.fin-table .sel { background: var(--accent-soft); }
+.fin-list { margin-top: 8px; }
+.fin-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.fin-row:last-child { border-bottom: 0; }
+.fin-main { min-width: 0; }
+.fin-main b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-main small { display: block; color: var(--ink-3); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fin-amt.neg { color: var(--ink); } .fin-amt.pos { color: var(--ok); }
+.fin-cat { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fin-cat select { max-width: 100%; flex: 1 1 220px; height: 34px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 0 8px; }
+.fin-cat small { color: var(--ink-3); font-size: 12px; }
+.fin-rules { margin-top: 14px; }
