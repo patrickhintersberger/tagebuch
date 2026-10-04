@@ -556,81 +556,90 @@
   }
 
   // ---------- Wochen-Review automatisch ----------
-  // Fasst eine Woche (Sonntag bis Samstag) aus Tagebuch, Orten, Gewohnheiten und Bucket-Liste zusammen
-  // und gibt regelbasiertes Feedback. Am Sonntag gilt die gerade beendete Woche.
+  // Baut das Wochen-Review nach Patricks Vorlage (Sonntag bis Samstag) und übernimmt aus den Abendroutinen jedes Tages
+  // die Antworten: was gut lief, was störte, wie es sich anfühlte, Erkenntnisse, was anders laufen sollte, Glückstag.
+  // Die Wochenziele und -aufgaben vom letzten Wochen-Review kommen als „Meine letzten …“ mit hinein.
+  // Am Sonntag gilt die gerade beendete Woche.
   function reviewWeekStart() { const t = todayISO(); return parse(t).getDay() === 0 ? addDays(t, -7) : mondayOf(t); }
+  const WD_LONG = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
+  // Fragen der Abendroutine (auch leicht abgewandelte Formulierungen)
+  const DAY_Q = {
+    good: /dinge,? die gut liefen|was lief heute gut|was war heute gut/i,
+    bad: /lief heute nicht so gut|störte mich/i,
+    feel: /wie fühlte ich mich/i,
+    learn: /erkenntnis|gelernt oder erkannt|heute gelernt/i,
+    redo: /anders machen/i,
+    happy: /glückstag/i,
+  };
+  // Antwort unter einer Frage: Rest der Fragezeile plus die Zeilen darunter, bis zur nächsten Frage.
+  // Für die Tage zählt nur eine Frage am Zeilenanfang (nicht eingerückt), damit z.B. ein Monats-Review mit
+  // denselben Fragen in einer Unterliste nicht mitgenommen wird.
+  const DAY_STOP = l => Object.values(DAY_Q).some(r => r.test(l)) || /^[-*•]\s/.test(l) || /^#/.test(l) || /^(Morgens|Mittags|Nachmittags|Abends)\b/i.test(l);
+  function answerAfter(text, re, stop = DAY_STOP) {
+    const lines = String(text || '').split('\n');
+    const i = lines.findIndex(l => re.test(l) && !/^\s/.test(l));
+    if (i < 0) return '';
+    const out = [];
+    const rest = lines[i].replace(/^.*?[?:](\s*)/, '').trim();
+    if (rest && rest !== lines[i].trim() && !/^[-–]?\s*$/.test(rest) && !/^\(.*\)$/.test(rest)) out.push(rest); // „(3 Punkte)“ gehört zur Frage
+    for (let j = i + 1; j < lines.length; j++) {
+      const l = lines[j];
+      if (stop(l)) break; // nächste Frage
+      if (l.trim()) out.push(l.replace(/^\s+/, ''));
+    }
+    return out.filter(l => !/^([-*•]|\d+\.)?\s*$/.test(l)).join('\n');
+  }
   function buildWeekReview(start) {
     const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
     const end = days[6], today = todayISO();
-    const past = days.filter(d => d <= today);
     const short = d => parse(d).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
-    const L = [];
-    // Tagebuch
-    const ents = S.entries.filter(e => e.date >= start && e.date <= end && !(e.tags || []).includes('Wochen-Review'));
-    const withEntry = new Set(ents.map(e => e.date));
-    const missing = past.filter(d => !withEntry.has(d));
-    const rated = ents.filter(e => e.rating);
-    L.push('## Tagebuch');
-    L.push(`- Einträge an ${withEntry.size} von ${past.length} Tagen${missing.length ? ` (ohne Eintrag: ${missing.map(d => WD[parse(d).getDay()] + ' ' + short(d)).join(', ')})` : ''}`);
-    if (rated.length) {
-      const avg = rated.reduce((n, e) => n + e.rating, 0) / rated.length;
-      const best = rated.reduce((a, b) => b.rating > a.rating ? b : a), worst = rated.reduce((a, b) => b.rating < a.rating ? b : a);
-      L.push(`- Bewertung im Schnitt ${avg.toFixed(1).replace('.', ',')} von 10 (bester Tag: ${WD[parse(best.date).getDay()]} mit ${best.rating}${worst !== best ? `, schwächster: ${WD[parse(worst.date).getDay()]} mit ${worst.rating}` : ''})`);
-    }
-    const places = [...new Set(ents.filter(e => e.loc && e.loc.name).map(e => e.loc.name.split(',').slice(-2).map(x => x.trim()).join(', ')))];
-    if (places.length) L.push(`- Orte: ${places.join(' · ')}`);
-    const tagc = new Map(); ents.forEach(e => (e.tags || []).forEach(t => tagc.set(t, (tagc.get(t) || 0) + 1)));
-    if (tagc.size) L.push(`- Tags: ${[...tagc].map(([t, n]) => n > 1 ? `${t} (${n}×)` : t).join(', ')}`);
-    // Gewohnheiten
-    const idx = habitIndex();
-    const good = [], weak = [], notes = [];
-    L.push('', '## Gewohnheiten');
-    S.habits.filter(h => !h.archived && hbStart(h) <= end).forEach(h => {
-      const dv = idx.get(h.id) || new Map();
-      const act = past.filter(d => d >= hbStart(h));
-      if (!act.length) return;
-      const okDays = act.filter(d => hbDone(h, dv.get(d))).length;
-      const prev = days.map(d => addDays(d, -7)).filter(d => d >= hbStart(h));
-      const prevOk = prev.filter(d => hbDone(h, dv.get(d))).length;
-      const unitPrev = h.kind === 'avoid' ? `${prevOk} Tage gehalten` : hbDaily(h) ? `${prevOk} Tage` : `${prevOk}×`;
-      const trend = prev.length ? (okDays - prevOk > 0 ? ` (besser als Vorwoche: ${unitPrev})` : okDays - prevOk < 0 ? ` (schlechter als Vorwoche: ${unitPrev})` : ' (wie Vorwoche)') : '';
-      const st = hbStreak(h, dv, today);
-      const streak = st.n > 1 ? ` · Serie ${st.n} ${st.unit}` : '';
-      if (h.kind === 'avoid') {
-        const slips = act.length - okDays;
-        L.push(`- ${h.icon || ''} ${h.name}: ${okDays} von ${act.length} Tagen gehalten${slips ? `, ${slips} Ausrutscher` : ''}${trend}${streak}`);
-        (slips ? weak : good).push(h.name);
-        if (slips >= 2) notes.push(`${h.name}: ${slips} Ausrutscher. Was war an diesen Tagen anders?`);
-      } else if (!hbDaily(h)) {
-        const goal = h.perWeek;
-        L.push(`- ${h.icon || ''} ${h.name}: ${okDays} von ${goal}× ${okDays >= goal ? '✓' : '✗'}${trend}${streak}`);
-        (okDays >= goal ? good : weak).push(h.name);
-        if (okDays < goal) notes.push(`${h.name}: Wochenziel ${goal}× verfehlt (${okDays}×). Feste Tage im Kalender blocken.`);
-      } else {
-        const pct = Math.round(okDays / act.length * 100);
-        let extra = '';
-        if ((h.target || 1) > 1) {
-          const vals = act.map(d => dv.get(d) || 0), avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-          extra = ` · Schnitt ${Math.round(avg).toLocaleString('de-DE')} von ${(+h.target).toLocaleString('de-DE')}${h.unit ? ' ' + h.unit : ''}`;
-        }
-        L.push(`- ${h.icon || ''} ${h.name}: ${okDays} von ${act.length} Tagen (${pct} %)${extra}${trend}${streak}`);
-        (pct === 100 ? good : pct < 70 ? weak : []).push(h.name);
-        if (pct < 70) notes.push(`${h.name}: nur ${okDays} von ${act.length} Tagen. An eine feste Uhrzeit oder Gewohnheit koppeln.`);
-      }
+    const isReview = e => (e.tags || []).includes('Wochen-Review') || /^Wochen-?review/i.test(e.title || '');
+    const isOther = e => (e.tags || []).some(t => /review|rückblick|planung/i.test(t)); // Monats-Review, Jahresplanung …
+    const ents = S.entries.filter(e => e.date >= start && e.date <= end && !isReview(e) && !isOther(e))
+      .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
+    const byDay = d => ents.filter(e => e.date === d);
+    // Pro Tag die Antwort auf eine Frage, mehrzeilige Antworten eingerückt darunter
+    const perDay = key => days.map(d => {
+      let ans = byDay(d).map(e => answerAfter(e.text, DAY_Q[key])).filter(Boolean).join('\n');
+      if (key === 'happy' && !ans && byDay(d).some(e => (e.tags || []).includes('Glückstag'))) ans = 'Glückstag';
+      const label = `- ${WD_LONG[parse(d).getDay()]} (${short(d)}):`;
+      if (!ans) return label;
+      const ls = ans.split('\n');
+      return ls.length === 1 && !/^\d+\./.test(ls[0]) ? `${label} ${ls[0]}` : `${label}\n${ls.map(l => '\t' + l).join('\n')}`;
     });
-    // Feedback
-    L.push('', '## Feedback');
-    if (good.length) L.push(`- Stark: ${good.join(', ')}`);
-    if (weak.length) L.push(`- Mehr Aufmerksamkeit: ${weak.join(', ')}`);
-    notes.forEach(n => L.push('- ' + n));
-    if (missing.length >= 2) L.push(`- ${missing.length} Tage ohne Tagebucheintrag. Für den Länderzähler zählt jeder Tag mit Ort.`);
-    if (!good.length && !weak.length && !notes.length) L.push('- Keine Gewohnheitsdaten für diese Woche.');
-    // Vorschläge
-    const sug = bucketSuggestions(3);
-    L.push('', '## Für nächste Woche');
-    if (weak.length) L.push(`- Fokus-Gewohnheit: ${weak[0]}`);
-    sug.forEach(({ b, reason }) => L.push(`- Bucket-Liste: ${b.title} (${reason})`));
-    L.push('', '## Meine Gedanken', 'Was lief diese Woche gut?', '', '', 'Was nehme ich mit?', '', '', 'Die drei wichtigsten Ziele für nächste Woche:', '1. ', '2. ', '3. ', '');
+    // Bewertungen der Tage als Hilfe für die eigene Wochenbewertung
+    const rated = days.map(d => [d, byDay(d).map(e => e.rating).filter(Boolean)]).filter(([, r]) => r.length).map(([d, r]) => [d, Math.max(...r)]);
+    const avg = rated.length ? rated.reduce((n, [, r]) => n + r, 0) / rated.length : 0;
+    const ratingLine = rated.length ? `Schnitt der Tage: ${avg.toFixed(1).replace('.', ',')} von 10 (${rated.map(([d, r]) => `${WD[parse(d).getDay()]} ${r}`).join(' · ')})` : '';
+    // Letztes Wochen-Review: Ziele und Aufgaben für diese Woche
+    const prev = S.entries.filter(e => isReview(e) && e.date < start).sort((a, b) => b.date.localeCompare(a.date))[0];
+    const RV_Q = /^\s*(#+\s*)?(\*\*)?(was |wie |wenn |welche|meine |notion|»)/i; // Fragezeilen des Wochen-Reviews
+    const prevAns = re => prev ? answerAfter(prev.text, re, l => RV_Q.test(l) && !re.test(l)) : '';
+    const lastGoals = prevAns(/noch besser zu werden/i);
+    const lastTasks = prevAns(/wichtigsten Aufgaben nächste Woche/i);
+    const block = t => t ? t.split('\n').map(l => /^([-*•]|\d+\.)\s/.test(l) ? l : '- ' + l).join('\n') : '';
+
+    const L = [
+      '## Was war alles gut? (Sonntag – Samstag)', ...perDay('good'), '',
+      '## Was für eine Bewertung privat habe ich diese Woche?', ...(ratingLine ? [ratingLine] : []), '', '',
+      '## Was lief nicht so gut oder störte mich?', ...perDay('bad'), '',
+      '## Wie fühlte ich mich diese Woche?', ...perDay('feel'), '',
+      '## Meine Learnings der Woche', ...perDay('learn'), '',
+      '## Was macht mich wirklich glücklich?', ...perDay('happy').filter(l => l.includes('\n') || !/:$/.test(l)), '', '',
+      '## Wenn ich exakt die gleiche Woche nochmal so durchleben dürfte, mit allem, was ich weiß, was kommt und kommen wird: Was würde ich beim nächsten Mal anders machen?',
+      ...perDay('redo').filter(l => l.includes('\n') || !/:$/.test(l)), '', '',
+      '## Wie viel Zeit habe ich für was benötigt?', '- Videos schauen: ', '- Fulfillment: ', '- Am Unternehmen: ', '- Vertrieb: ', '- Privat: ', '',
+      '## Was sind die 20 % der Dinge, die mich 80 % weiterbringen?',
+      'Was mache ich zu 80 %, was mir nur 20 % Ergebnis bringt? Being busy but going nowhere: Nur weil du viel tust, heißt es noch lange nicht, dass du auch effektiv bist.', '', '',
+      '## Welches ist die EINE Sache, die ich tun kann, sodass alles andere einfacher oder sogar überflüssig wird?', '', '',
+      '## Wie war die Woche für meine Jahresziele?',
+      '- Beruf / Karriere: ', '- Finanzen / Wohlstand: ', '- Körper / Fitness / Gesundheit: ', '- Spiritualität: ', '- Liebe / Partnerschaft: ',
+      '- Emotionale Fitness: ', '- Umfeld / Sozialleben: ', '- Organisation / Zeit: ', '',
+      '## Meine letzten Wochenziele', ...(lastGoals ? [block(lastGoals)] : []), '',
+      '## Was muss ich nächste Woche machen, um noch besser zu werden? (3 Punkte)', '1. ', '2. ', '3. ', '',
+      '## Meine letzten Wochenaufgaben', ...(lastTasks ? [block(lastTasks)] : []), '',
+      '## Was sind die 3 wichtigsten Aufgaben nächste Woche?', '1. ', '2. ', '3. ', '',
+    ];
     return { title: `Wochen-Review ${short(start)}–${short(end)}`, text: L.join('\n'), date: end > today ? today : end };
   }
   function createWeekReview() {
