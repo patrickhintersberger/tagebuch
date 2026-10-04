@@ -2,7 +2,7 @@
 // Beim Installieren wird die ganze App samt Bibliotheken und Schriften auf dem Gerät abgelegt.
 // Eigene Dateien kommen zuerst aus dem Netz (damit Updates sofort ankommen), aber nur, wenn das Netz
 // schnell antwortet; sonst sofort aus dem Zwischenspeicher. Bibliotheken und Schriften kommen direkt aus dem Zwischenspeicher.
-const CACHE = 'tagebuch-v33';
+const CACHE = 'tagebuch-v34';
 const LIBS = ['cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 const SHELL = ['index.html', 'app.js', 'store.js', 'finanzen.js', 'freigabe.js', 'config.js', 'style.css', 'geo.js', 'manifest.webmanifest',
   'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'];
@@ -68,7 +68,9 @@ async function fromLib(req) {
 async function fromOwn(req) {
   const cache = await caches.open(CACHE);
   const key = ownKey(req.url);
-  const net = fetch(req).then(res => {
+  // Beim Server nachfragen statt den Browser-Zwischenspeicher zu nehmen (GitHub Pages erlaubt dort 10 Minuten),
+  // sonst kommt ein Update erst verspätet an. Unverändertes wird mit „nicht geändert“ beantwortet und kostet kaum etwas.
+  const net = fetch(req.mode === 'navigate' ? req.url : req, { cache: 'no-cache' }).then(res => {
     if (res.ok) cache.put(key, res.clone());
     return res;
   });
