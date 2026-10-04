@@ -570,3 +570,6 @@ img.missing { opacity: .35; }
 .fin-c-biz { fill: #e8912d; background: #e8912d; }
 .fin-legend { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; font-size: 12.5px; color: var(--ink-2); margin-top: 4px; }
 .fin-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+/* Finanzen nutzen die volle Breite, damit das ganze Jahr ohne Scrollen sichtbar ist */
+.page.fin { max-width: 1500px; }
+@media (min-width: 1200px) { .fin-table table { min-width: 0; } .fin-table tbody th { max-width: 260px; } }
