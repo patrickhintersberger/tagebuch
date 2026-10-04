@@ -21,25 +21,29 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="style.css?v=27">
+<link rel="stylesheet" href="style.css?v=28">
 </head>
 <body>
 <div id="app">
   <nav class="nav" id="nav" aria-label="Bereiche">
     <div class="brand"><span class="ms fill">auto_stories</span><b>Daily</b></div>
+    <div class="nav-h">Tagebuch</div>
     <button data-nav="calendar"><span class="ms">calendar_month</span><span>Kalender</span></button>
     <button data-nav="timeline"><span class="ms">article</span><span>Zeitleiste</span></button>
-    <button data-nav="map"><span class="ms">map</span><span>Karte</span></button>
-    <button data-nav="travel"><span class="ms">luggage</span><span>Reisekarte</span></button>
-    <button data-nav="attachments"><span class="ms">grid_view</span><span>Anhänge</span></button>
+    <button data-nav="memories"><span class="ms">history</span><span>An diesem Tag</span></button>
+    <button data-nav="habits"><span class="ms">task_alt</span><span>Gewohnheiten</span></button>
     <button data-nav="search" class="nav-desk"><span class="ms">search</span><span>Suche</span></button>
     <button data-nav="tags" class="nav-desk"><span class="ms">sell</span><span>Tags</span></button>
-    <button data-nav="habits"><span class="ms">task_alt</span><span>Gewohnheiten</span></button>
+    <button data-nav="attachments"><span class="ms">grid_view</span><span>Anhänge</span></button>
+    <div class="nav-h">Reisen</div>
+    <button data-nav="map"><span class="ms">map</span><span>Karte</span></button>
+    <button data-nav="travel"><span class="ms">luggage</span><span>Reisekarte</span></button>
     <button data-nav="bucket"><span class="ms">flag</span><span>Bucket-Liste</span></button>
-    <button data-nav="life"><span class="ms">hourglass_top</span><span>Lebenszeit</span></button>
-    <button data-nav="finanzen"><span class="ms">payments</span><span>Finanzen</span></button>
     <button data-nav="countries"><span class="ms">public</span><span>Länderzähler</span></button>
-    <button data-nav="memories"><span class="ms">history</span><span>An diesem Tag</span></button>
+    <div class="nav-h">Finanzen</div>
+    <button data-nav="finanzen"><span class="ms">payments</span><span>Finanzen</span></button>
+    <div class="nav-h">Das große Ganze</div>
+    <button data-nav="life"><span class="ms">hourglass_top</span><span>Lebenszeit</span></button>
     <button class="nav-settings sync-btn" data-act="settings" id="sync-btn"><span class="ms">settings</span><span>Einstellungen</span><i class="sync-dot"></i></button>
   </nav>
 
@@ -68,8 +72,8 @@
 <script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
 <script src="config.js?v=24"></script>
-<script src="store.js?v=27"></script>
-<script src="finanzen.js?v=27"></script>
-<script src="app.js?v=27"></script>
+<script src="store.js?v=28"></script>
+<script src="finanzen.js?v=28"></script>
+<script src="app.js?v=28"></script>
 </body>
 </html>

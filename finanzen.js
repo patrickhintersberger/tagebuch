@@ -243,6 +243,34 @@
     return rowsToFinance(parseCSV(await file.text()), file.name);
   }
 
+  // ---------- Diagramm: je Monat drei Balken (Einnahmen, Ausgaben privat, Ausgaben geschäftlich) ----------
+  const SERIES = [['in', 'Einnahmen', 'fin-c-in'], ['out', 'Ausgaben privat', 'fin-c-out'], ['biz', 'Ausgaben geschäftlich', 'fin-c-biz']];
+  function chart(rows) {
+    const v = MONTHS.map(() => ({ in: 0, out: 0, biz: 0 }));
+    for (const t of rows) if (t.g in v[0]) v[+t.date.slice(5, 7) - 1][t.g] += t.g === 'in' ? t.amount : -t.amount;
+    const max = Math.max(1, ...v.flatMap(m => [m.in, m.out, m.biz]));
+    // runde Skala: 1, 2 oder 5 × Zehnerpotenz
+    const step = (() => { const raw = max / 4; const p = 10 ** Math.floor(Math.log10(raw)); return [1, 2, 5, 10].map(f => f * p).find(s => s >= raw); })();
+    const top = Math.ceil(max / step) * step;
+    const W = 760, H = 250, L = 48, B = 26, T = 10, plotH = H - B - T, gw = (W - L) / 12, bw = Math.min(16, (gw - 10) / 3);
+    const y = c => T + plotH - (c / top) * plotH;
+    const k = c => { const e = c / 100; return e >= 1000 ? `${(e / 1000).toLocaleString('de-DE', { maximumFractionDigits: 1 })}k` : Math.round(e).toLocaleString('de-DE'); };
+    let svg = '';
+    for (let s = 0; s <= top; s += step) svg += `<line x1="${L}" x2="${W}" y1="${y(s)}" y2="${y(s)}" class="fin-grid"/><text x="${L - 6}" y="${y(s) + 4}" text-anchor="end" class="fin-ax">${k(s)}</text>`;
+    v.forEach((m, i) => {
+      const x0 = L + i * gw + (gw - bw * 3 - 4) / 2;
+      const sel = ui.month === null || ui.month === i;
+      svg += `<g class="fin-mon${sel ? '' : ' dim'}" data-fin="month" data-m="${i}"><rect x="${L + i * gw}" y="${T}" width="${gw}" height="${plotH}" class="fin-hit"/>`;
+      SERIES.forEach(([g, label, cls], j) => {
+        const val = Math.max(0, m[g]);
+        svg += `<rect x="${x0 + j * (bw + 2)}" y="${y(val)}" width="${bw}" height="${Math.max(0, T + plotH - y(val))}" rx="3" class="${cls}"><title>${MONTHS_LONG[i]}: ${label} ${eur0(m[g])}</title></rect>`;
+      });
+      svg += `<text x="${L + i * gw + gw / 2}" y="${H - 8}" text-anchor="middle" class="fin-ax">${MONTHS[i]}</text></g>`;
+    });
+    return `<div class="fin-chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Einnahmen und Ausgaben je Monat">${svg}</svg>
+      <div class="fin-legend">${SERIES.map(([, label, cls]) => `<span><i class="${cls}"></i>${label}</span>`).join('')}</div></div>`;
+  }
+
   // ---------- Auswertung ----------
   const ui = { year: String(new Date().getFullYear()), month: null, filter: 'open', msg: '', busy: false };
 
@@ -321,6 +349,8 @@
         <div><span>Übrig</span><b class="${left >= 0 ? 'ok' : 'bad'}">${eur0(left)}</b><small>${rate === null ? '' : `Sparquote ${rate} %`}</small></div>
       </section>
       ${saved || prop ? `<p class="hint">${[saved ? `Gespart und angelegt: ${eur0(saved)}` : '', prop ? `Immobilie (Kauf & Umbau über Kredit, nicht in den Ausgaben): ${eur0(prop)}` : ''].filter(Boolean).join(' · ')}.</p>` : ''}
+      <h2 class="ct-h">Monate ${esc(ui.year)}</h2>
+      ${chart(yearRows)}
       <h2 class="ct-h">Jahresübersicht ${esc(ui.year)}</h2>
       <div class="ct-table fin-table"><table><thead><tr><th></th>${MONTHS.map((m, i) => `<th class="${ui.month === i ? 'sel' : ''}">${m}${src[i] ? `<small title="${src[i] === 'N' ? 'Werte aus der Numbers-Jahresübersicht' : 'Werte aus den Buchungen'}">${src[i] === 'N' ? 'Numbers' : 'Buchungen'}</small>` : ''}</th>`).join('')}<th>Gesamt</th><th>Ø Monat</th></tr></thead><tbody>${table || '<tr><td colspan="15" class="hint">Noch nichts zugeordnet.</td></tr>'}</tbody></table></div>
       <h2 class="ct-h">Buchungen</h2>
