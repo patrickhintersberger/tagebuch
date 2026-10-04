@@ -590,3 +590,5 @@ img.missing { opacity: .35; }
 .share-item .row-btns { margin: 0; flex: none; }
 .share-two label { min-width: 0; }
 .share-form input[type="date"] { max-width: 100%; -webkit-appearance: none; appearance: none; }
+/* Feedback von Claude im Wochen-Review */
+.ed-ai .ai-live { white-space: pre-wrap; font-size: 14px; line-height: 1.5; background: var(--surface-2); border-radius: 10px; padding: 10px 12px; max-height: 260px; overflow-y: auto; color: var(--ink-2); }
