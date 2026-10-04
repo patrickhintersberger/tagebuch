@@ -12,7 +12,8 @@
   const VIEW = `https://${cfg.owner}.github.io/${REPO}/`;
   const LS = 'tb-shares';
   const PACK = 4 * 1024 * 1024; // Bilder werden zu Paketen von etwa 4 MB zusammengefasst (weniger Anfragen an GitHub)
-  const MAX_PHOTOS = 400;
+  const MAX_PHOTOS = 5000;
+  const BLOB_GAP = 1000; // mindestens 1 s zwischen zwei Uploads, damit GitHubs Grenze (80 pro Minute) nicht greift
   const $ = (s, r = document) => r.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const ms = name => `<span class="ms">${name}</span>`;
@@ -29,7 +30,8 @@
 
   // ---------- GitHub (Git-Daten-API: viele Dateien in einem Commit) ----------
   const NO_ACCESS = `Der GitHub-Token hat noch keinen Zugriff auf das Repo „${REPO}“. Auf github.com beim Token unter „Repository access“ zusätzlich „${REPO}“ auswählen und bei „Contents“ „Read and write“ lassen. Danach hier erneut versuchen.`;
-  async function api(method, path, body) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  async function api(method, path, body, tries = 0) {
     let res;
     try {
       res = await fetch(`https://api.github.com/repos/${cfg.owner}/${REPO}/${path}`, {
@@ -41,6 +43,13 @@
     if (!res.ok) {
       // Originalmeldung von GitHub mit anzeigen, damit sich die Ursache erkennen lässt
       let gm = ''; try { gm = (await res.json()).message || ''; } catch {}
+      // Zu viele Anfragen in kurzer Zeit: warten, wie GitHub es vorgibt, und erneut versuchen
+      if ((res.status === 403 || res.status === 429) && /rate limit/i.test(gm) && tries < 6) {
+        const wait = (+res.headers.get('retry-after') || 60) * 1000;
+        if (api.onWait) api.onWait(Math.round(wait / 1000));
+        await sleep(wait);
+        return api(method, path, body, tries + 1);
+      }
       const detail = ` (GitHub: ${res.status}${gm ? ' – ' + gm : ''}, bei ${method} ${path.split('?')[0]})`;
       if (res.status === 401) throw new Error('GitHub kennt den Token nicht (mehr). Bitte in den Einstellungen neu verbinden.' + detail);
       if (res.status === 403 || res.status === 404) throw Object.assign(new Error(NO_ACCESS + detail), { status: res.status });
@@ -107,9 +116,8 @@
     return out;
   }
   async function photoBytes(id, thumb) {
-    const url = await S.photoURL(id, thumb);
-    if (!url) return null;
-    return new Uint8Array(await (await fetch(url)).arrayBuffer());
+    const blob = await S.photoBlob(id, thumb);
+    return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
   }
 
   async function create(o, progress) {
@@ -120,72 +128,99 @@
     if (sel.photos > MAX_PHOTOS) throw new Error(`Das sind ${sel.photos} Bilder. Bitte wähle einen kürzeren Zeitraum (höchstens ${MAX_PHOTOS} Bilder).`);
     await api('GET', 'git/ref/heads/main'); // Zugriff früh prüfen, bevor Bilder verarbeitet werden
 
-    const raw = crypto.getRandomValues(new Uint8Array(32));
-    const key = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt']);
-    const id = Array.from(crypto.getRandomValues(new Uint8Array(8)), b => (b % 36).toString(36)).join('') + Date.now().toString(36).slice(-4);
-    const folder = `${o.until}_${id}`;
+    // Bildschirm anlassen, solange hochgeladen wird (sonst bricht das iPhone im Ruhezustand ab)
+    // (nicht abwarten: die Anfrage darf das Hochladen nie aufhalten)
+    let lock = null;
+    const wake = () => { try { if (navigator.wakeLock) navigator.wakeLock.request('screen').then(l => { lock = l; }, () => {}); } catch {} };
+    wake();
+    const relock = () => { if (document.visibilityState === 'visible' && (!lock || lock.released)) wake(); };
+    document.addEventListener('visibilitychange', relock);
+    try {
+      const raw = crypto.getRandomValues(new Uint8Array(32));
+      const key = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt']);
+      const id = Array.from(crypto.getRandomValues(new Uint8Array(8)), b => (b % 36).toString(36)).join('') + Date.now().toString(36).slice(-4);
+      const folder = `${o.until}_${id}`;
 
-    // Pakete: Vorschaubilder (t0, t1 …) und große Bilder (p0, p1 …)
-    const files = [];
-    const packers = {};
-    const packer = prefix => packers[prefix] || (packers[prefix] = { prefix, n: 0, parts: [], size: 0 });
-    const flush = pk => { if (!pk.size) return; const buf = new Uint8Array(pk.size); let o2 = 0; pk.parts.forEach(p => { buf.set(p, o2); o2 += p.length; }); files.push({ name: `${pk.prefix}${pk.n}.bin`, bytes: buf }); pk.n++; pk.parts = []; pk.size = 0; };
-    const put = (prefix, bytes) => {
-      const pk = packer(prefix);
-      if (pk.size && pk.size + bytes.length > PACK) flush(pk);
-      const ref = [`${pk.prefix}${pk.n}.bin`, pk.size, bytes.length];
-      pk.parts.push(bytes); pk.size += bytes.length;
-      return ref;
-    };
-
-    const days = [];
-    let done = 0;
-    for (const e of sel.entries) {
-      const day = { date: e.date };
-      if (o.titles && e.title) day.title = e.title;
-      if (e.loc && e.loc.lat != null) { day.lat = e.loc.lat; day.lng = e.loc.lng; }
-      if (e.loc && e.loc.name) day.place = e.loc.name;
-      const cc = entryCC(e); if (cc) day.cc = cc;
-      if (e.weather) day.weather = e.weather;
-      day.photos = [];
-      for (const p of (e.photos || []).filter(x => x.kind !== 'video')) {
-        progress(`Bilder werden verschlüsselt … ${++done} von ${sel.photos}`);
-        const [t, full] = await Promise.all([photoBytes(p.id, true), photoBytes(p.id, false)]);
-        if (!t && !full) continue;
-        const ph = { t: put('t', await encrypt(key, t || full)), p: put('p', await encrypt(key, full || t)) };
-        if (p.w) { ph.w = p.w; ph.h = p.h; }
-        if (p.lat != null) { ph.lat = p.lat; ph.lng = p.lng; }
-        day.photos.push(ph);
+      // Hochladen: jedes Paket sofort, sobald es voll ist, dann ein gemeinsamer Commit am Ende
+      const entries = [];
+      let sent = 0, lastPost = 0, status = '';
+      const show = () => progress(`${status} · ${(sent / 1e6).toFixed(0)} MB hochgeladen`);
+      api.onWait = sec => progress(`GitHub bremst kurz, es geht in ${sec} s weiter …`);
+      async function upload(name, bytes) {
+        const gap = lastPost + BLOB_GAP - Date.now();
+        if (gap > 0) await sleep(gap);
+        lastPost = Date.now();
+        const blob = await api('POST', 'git/blobs', { content: b64(bytes), encoding: 'base64' });
+        entries.push({ path: `${folder}/${name}`, sha: blob.sha });
+        sent += bytes.length; show();
       }
-      days.push(day);
+
+      // Pakete: Vorschaubilder (t0, t1 …) und große Bilder (p0, p1 …)
+      const packers = {};
+      const packer = prefix => packers[prefix] || (packers[prefix] = { prefix, n: 0, parts: [], size: 0 });
+      async function flush(pk) {
+        if (!pk.size) return;
+        const buf = new Uint8Array(pk.size); let off = 0;
+        pk.parts.forEach(p => { buf.set(p, off); off += p.length; });
+        const name = `${pk.prefix}${pk.n}.bin`;
+        pk.n++; pk.parts = []; pk.size = 0;
+        await upload(name, buf);
+      }
+      async function put(prefix, bytes) {
+        const pk = packer(prefix);
+        if (pk.size && pk.size + bytes.length > PACK) await flush(pk);
+        const ref = [`${pk.prefix}${pk.n}.bin`, pk.size, bytes.length];
+        pk.parts.push(bytes); pk.size += bytes.length;
+        return ref;
+      }
+
+      const days = [];
+      let done = 0, added = 0;
+      for (const e of sel.entries) {
+        const day = { date: e.date };
+        if (o.titles && e.title) day.title = e.title;
+        if (e.loc && e.loc.lat != null) { day.lat = e.loc.lat; day.lng = e.loc.lng; }
+        if (e.loc && e.loc.name) day.place = e.loc.name;
+        const cc = entryCC(e); if (cc) day.cc = cc;
+        if (e.weather) day.weather = e.weather;
+        day.photos = [];
+        for (const p of (e.photos || []).filter(x => x.kind !== 'video')) {
+          status = `Bild ${++done} von ${sel.photos}`; show();
+          const [t, full] = await Promise.all([photoBytes(p.id, true), photoBytes(p.id, false)]);
+          if (!t && !full) continue;
+          const ph = { t: await put('t', await encrypt(key, t || full)), p: await put('p', await encrypt(key, full || t)) };
+          if (p.w) { ph.w = p.w; ph.h = p.h; }
+          if (p.lat != null) { ph.lat = p.lat; ph.lng = p.lng; }
+          day.photos.push(ph); added++;
+        }
+        days.push(day);
+      }
+      status = 'Letzte Pakete';
+      for (const pk of Object.values(packers)) await flush(pk);
+
+      const places = sel.places.map(p => {
+        // Persönliche Notiz (note) und interne Felder bleiben draußen
+        const out = { name: p.name, category: p.category, lat: p.lat, lng: p.lng, city: p.city, country: (p.country || '').toLowerCase(), info: p.info, visited: !!p.visited, visitedDate: p.visitedDate, tripIds: p.tripIds };
+        Object.keys(out).forEach(k => (out[k] == null || out[k] === '') && delete out[k]);
+        return out;
+      });
+      const trips = sel.trips.map(t => ({ id: t.id, name: t.name, color: t.color, start: t.start, end: t.end }));
+      const manifest = { v: 1, title: o.title, from: o.from || null, to: o.to || null, cc: o.cc || null, until: o.until, created: Date.now(), days, places, trips };
+      status = 'Inhalt';
+      await upload('data.bin', await encrypt(key, new TextEncoder().encode(JSON.stringify(manifest))));
+      progress('Link wird fertiggestellt …');
+      await commit(`Freigabe bis ${o.until}`, entries);
+
+      const link = `${VIEW}#${folder}.${b64url(raw)}`;
+      const list = lsGet(LS, []).filter(x => x.folder !== folder);
+      list.push({ folder, link, title: o.title, until: o.until, created: Date.now(), days: days.length, photos: added, places: places.length });
+      lsSet(LS, list);
+      return { link, days: days.length, photos: added, places: places.length };
+    } finally {
+      api.onWait = null;
+      document.removeEventListener('visibilitychange', relock);
+      try { if (lock) lock.release(); } catch {}
     }
-    Object.values(packers).forEach(flush);
-
-    const places = sel.places.map(p => {
-      // Persönliche Notiz (note) und interne Felder bleiben draußen
-      const out = { name: p.name, category: p.category, lat: p.lat, lng: p.lng, city: p.city, country: (p.country || '').toLowerCase(), info: p.info, visited: !!p.visited, visitedDate: p.visitedDate, tripIds: p.tripIds };
-      Object.keys(out).forEach(k => (out[k] == null || out[k] === '') && delete out[k]);
-      return out;
-    });
-    const trips = sel.trips.map(t => ({ id: t.id, name: t.name, color: t.color, start: t.start, end: t.end }));
-    const manifest = { v: 1, title: o.title, from: o.from || null, to: o.to || null, cc: o.cc || null, until: o.until, created: Date.now(), days, places, trips };
-    files.push({ name: 'data.bin', bytes: await encrypt(key, new TextEncoder().encode(JSON.stringify(manifest))) });
-
-    // Hochladen: erst alle Dateien, dann ein Commit
-    const entries = [];
-    for (let i = 0; i < files.length; i++) {
-      progress(`Wird hochgeladen … ${i + 1} von ${files.length}`);
-      const blob = await api('POST', 'git/blobs', { content: b64(files[i].bytes), encoding: 'base64' });
-      entries.push({ path: `${folder}/${files[i].name}`, sha: blob.sha });
-    }
-    progress('Link wird fertiggestellt …');
-    await commit(`Freigabe bis ${o.until}`, entries);
-
-    const link = `${VIEW}#${folder}.${b64url(raw)}`;
-    const list = lsGet(LS, []).filter(s => s.folder !== folder);
-    list.push({ folder, link, title: o.title, until: o.until, created: Date.now(), days: days.length, photos: done, places: places.length });
-    lsSet(LS, list);
-    return { link, days: days.length, photos: days.reduce((n, d) => n + d.photos.length, 0), places: places.length };
   }
 
   async function remoteFolders() {
@@ -254,7 +289,10 @@
       const s = select(o);
       const parts = [`${s.entries.length} Reisetage`, `${s.photos} Bilder`];
       if (o.places) parts.push(`${s.places.length} Orte`);
-      $('#share-count', box).textContent = `Enthalten: ${parts.join(', ')}.` + (s.photos > MAX_PHOTOS ? ` Das sind zu viele Bilder (höchstens ${MAX_PHOTOS}).` : '') + (!o.from && !o.to && !o.cc ? ' Ohne Zeitraum und Land wird alles freigegeben.' : '');
+      const mins = Math.ceil(s.photos / 100); // grob: ca. 200 KB je Bild, je nach Leitung 1–3 Minuten pro 100 Bilder
+      $('#share-count', box).textContent = `Enthalten: ${parts.join(', ')}.` + (s.photos > MAX_PHOTOS ? ` Das sind zu viele Bilder (höchstens ${MAX_PHOTOS}).` : '')
+        + (!o.from && !o.to && !o.cc ? ' Ohne Zeitraum und Land wird alles freigegeben.' : '')
+        + (s.photos > 300 ? ` Das Hochladen dauert eine Weile (bei ${s.photos} Bildern grob ${mins}–${mins * 3} Minuten). Lass Daily dabei geöffnet, am besten am Mac im WLAN.` : '');
     };
     f.addEventListener('input', count);
     count();
@@ -266,6 +304,8 @@
       if (o.until < today()) { toast('Das Ablaufdatum liegt in der Vergangenheit.'); return; }
       busy = true;
       const btn = f.querySelector('button'); btn.disabled = true;
+      const stay = ev2 => { ev2.preventDefault(); ev2.returnValue = ''; };
+      addEventListener('beforeunload', stay);
       const out = $('#share-result', box);
       out.innerHTML = '<p class="status"><i class="sync-dot"></i><span id="share-prog">Wird vorbereitet …</span></p>';
       try {
@@ -275,7 +315,7 @@
         refreshList();
       } catch (e) {
         out.innerHTML = `<p class="hint warn">${esc(e.message || 'Das hat nicht geklappt.')}</p>`;
-      } finally { busy = false; btn.disabled = false; }
+      } finally { busy = false; btn.disabled = false; removeEventListener('beforeunload', stay); }
     });
   }
   function linkHtml(link, text) {

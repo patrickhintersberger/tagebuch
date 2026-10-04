@@ -501,6 +501,17 @@
     return p;
   }
 
+  // Bilddaten direkt (für Freigaben): ohne Object-URL und ohne Ablage auf dem Gerät, damit auch tausende Bilder
+  // nacheinander verarbeitet werden können, ohne Speicher zu füllen.
+  async function photoBlob(id, thumb) {
+    const key = (thumb ? 't:' : 'p:') + id;
+    const blob = await idbGet('blobs', key);
+    if (blob) return blob;
+    if (!getToken() || !navigator.onLine) return null;
+    const res = await gh('GET', `${thumb ? 'thumbs' : 'photos'}/${id}.jpg`, null, 'application/vnd.github.raw');
+    return res.ok ? new Blob([await res.arrayBuffer()], { type: 'image/jpeg' }) : null;
+  }
+
   // ---------- öffentliche API ----------
   window.TB_STORE = {
     ready: null,
@@ -664,6 +675,7 @@
     addVideo,
     repairPoster,
     photoURL,
+    photoBlob,
     flush: saveLocal,
     sync,
   };
