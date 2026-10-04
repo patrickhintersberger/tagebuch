@@ -1486,7 +1486,8 @@
         </section>
 
         <section class="set"><h3>Synchronisation</h3>
-          <p class="status" data-status="${esc(S.status)}"><i class="sync-dot"></i>${esc(S.statusText || 'Nur auf diesem Gerät gespeichert')}${S.pendingPhotos ? ` · ${S.pendingPhotos} Bild(er) warten auf Upload` : ''}</p>
+          <p class="status" data-status="${esc(S.status)}"><i class="sync-dot"></i>${esc(S.statusText || 'Nur auf diesem Gerät gespeichert')}${S.unsynced && S.status !== 'ok' ? ' · Änderungen warten auf Upload' : ''}${S.pendingPhotos ? ` · ${S.pendingPhotos} Bild(er) warten auf Upload` : ''}</p>
+          <p class="hint" id="offline-ready"></p>
           ${S.hasToken() ? `<p class="hint">Verbunden mit <b>${esc(S.repo())}</b>.</p>
             <div class="row-btns left"><button class="btn ghost" data-act="sync-now">${ms('check')} Jetzt synchronisieren</button><button class="btn ghost danger" data-act="token-clear">Trennen</button></div>`
           : `<p class="hint">Damit Einträge und Bilder auf allen Geräten erscheinen und gesichert sind, verbinde die App mit deinem privaten GitHub-Repo <b>${esc(S.repo())}</b>.</p>
@@ -1510,6 +1511,7 @@
         </section>
       </div></div>`;
     pushBox();
+    offlineReady();
     $('#set-autoloc').addEventListener('change', e => lsSet('tb-autoloc', e.target.checked ? '1' : '0'));
     $$('.tplform[data-id]', o).forEach(f => f.addEventListener('submit', ev => {
       ev.preventDefault();
@@ -1549,6 +1551,15 @@
       }
       catch { toast('Diese Datei konnte nicht gelesen werden.'); }
     });
+  }
+  // Zeigt, ob die App vollständig auf dem Gerät liegt und damit ohne Internet startet
+  async function offlineReady() {
+    let ok = false;
+    try { ok = !!(navigator.serviceWorker && navigator.serviceWorker.controller && await caches.match(new URL('app.js', location.href).href)); } catch {}
+    const el = $('#offline-ready'); if (!el) return;
+    el.textContent = ok
+      ? 'Die App ist auf diesem Gerät gespeichert und funktioniert auch ohne Internet. Was du offline einträgst, wird synchronisiert, sobald wieder Verbindung besteht.'
+      : 'Die App wird gerade für die Nutzung ohne Internet gespeichert. Öffne sie einmal neu, solange du online bist.';
   }
   // ---------- Tägliche Erinnerung (Web Push) ----------
   const pushId = endpoint => { let h = 5381; for (let i = 0; i < endpoint.length; i++) h = ((h << 5) + h + endpoint.charCodeAt(i)) >>> 0; return 'p' + h.toString(36) + endpoint.length.toString(36); };
@@ -1768,7 +1779,7 @@
     Promise.resolve(S.sync()).then(repairPosters);
   });
 
-  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 })();

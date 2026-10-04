@@ -10,6 +10,9 @@ cd ~/Claude/Tagebuch && python3 -m http.server 8770
 ```
 Dann http://localhost:8770 öffnen. Der Standort funktioniert nur auf `localhost` oder über https.
 
+## Offline
+`sw.js` legt beim ersten Öffnen die ganze App samt Bibliotheken und Schriften auf dem Gerät ab. Ohne Internet startet sie aus diesem Speicher, Einträge und Bilder bleiben auf dem Gerät und werden beim nächsten Online-Gang synchronisiert. Neue Dateien der App in `SHELL` in `sw.js` eintragen und `CACHE` hochzählen.
+
 ## Daten
 - Auf dem Gerät: Browser-Speicher (IndexedDB), Einträge und Bilder.
 - Synchronisation: privates Repo `tagebuch-daten` über die GitHub-API (Token in den Einstellungen der App).

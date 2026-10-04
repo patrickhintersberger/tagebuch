@@ -67,7 +67,8 @@ h1, h2, h3, h4, p { margin: 0; }
 .nav .sync-dot { position: absolute; top: 9px; left: calc(50% + 6px); border: 2px solid var(--surface); box-sizing: content-box; }
 [data-status="ok"] .sync-dot { background: var(--ok); }
 [data-status="syncing"] .sync-dot { background: var(--accent); animation: pulse 1s infinite alternate; }
-[data-status="error"] .sync-dot, [data-status="offline"] .sync-dot { background: var(--danger); }
+[data-status="error"] .sync-dot { background: var(--danger); }
+[data-status="offline"] .sync-dot { background: #f0a400; }
 [data-status="notoken"] .sync-dot { background: #f0a400; }
 @keyframes pulse { to { opacity: .3; } }
 

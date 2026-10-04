@@ -171,9 +171,13 @@
   // ---------- GitHub API ----------
   function gh(method, path, body, accept) {
     const url = `https://api.github.com/repos/${getRepo()}/contents/${path}` + (method === 'GET' ? `?ref=${cfg.branch}` : '');
+    // Abbruch nach einer Minute, damit ein hängendes WLAN (z.B. im Flugzeug) die Synchronisation nicht blockiert
+    const ctl = new AbortController();
+    setTimeout(() => ctl.abort(), 60000);
     return fetch(url, {
       method,
       cache: 'no-store',
+      signal: ctl.signal,
       headers: {
         'Authorization': `Bearer ${getToken()}`,
         'Accept': accept || 'application/vnd.github+json',
@@ -181,7 +185,7 @@
         ...(body ? { 'Content-Type': 'application/json' } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
-    });
+    }).catch(() => { const e = new Error('Offline'); e.offline = true; throw e; });
   }
 
   const ERR = {
@@ -296,7 +300,9 @@
         setStatus('ok', 'Synchronisiert ' + new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }));
       } catch (e) {
         await saveLocal();
-        setStatus('error', e.message || 'Synchronisation fehlgeschlagen');
+        // Keine Verbindung (Netz weg oder WLAN ohne Internet): kein Fehler, die Änderungen bleiben auf dem Gerät
+        if (e && e.offline) setStatus('offline', 'Offline – wird später synchronisiert');
+        else setStatus('error', e.message || 'Synchronisation fehlgeschlagen');
       } finally {
         syncing = null;
         if (again) { again = false; setTimeout(sync, 300); }
@@ -496,6 +502,7 @@
     get status() { return store.status; },
     get statusText() { return store.statusText; },
     get pendingPhotos() { return store.pending.length; },
+    get unsynced() { return store.dirty.length; },
     hasToken() { return !!getToken(); },
     repo: getRepo,
     setToken(token, repo) {
