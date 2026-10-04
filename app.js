@@ -914,6 +914,50 @@
     ui.built = 'tags';
   }
 
+  // ---------- Ansicht: Vorlagen ----------
+  function viewTemplates(main) {
+    // Während eine Vorlage bearbeitet wird, nicht neu aufbauen (z.B. nach einer Synchronisation), sonst geht die Eingabe verloren
+    if (ui.built === 'templates' && editTpl && $('.tplform', main)) return;
+    const tpls = S.templates;
+    const tplForm = t => `<form class="tplform" data-id="${esc(t.id || '')}">
+      <input name="name" type="text" placeholder="Name der Vorlage" value="${esc(t.name || '')}" required>
+      <input name="tags" type="text" placeholder="Tags (mit Komma getrennt)" value="${esc((t.tags || []).join(', '))}">
+      <textarea name="body" rows="12" placeholder="Text der Vorlage. Zeilen mit ## werden zu Überschriften.">${esc(t.body || '')}</textarea>
+      <div class="row-btns">${t.id ? `<button type="button" class="btn danger ghost" data-act="tpl-delete" data-id="${esc(t.id)}">Löschen</button>` : ''}
+        <button type="button" class="btn ghost" data-act="tpl-cancel">Abbrechen</button><button class="btn">Speichern</button></div></form>`;
+    main.innerHTML = `<div class="page">
+      <header class="page-head"><h1>Vorlagen</h1></header>
+      <p class="hint">Vorlagen fügst du im Eintrag über das Dokument-Symbol oben ein.</p>
+      <section class="set">
+        ${tpls.map(t => editTpl === t.id ? tplForm(t) : `<button class="listrow" data-act="tpl-edit" data-id="${esc(t.id)}">${ms('description')}<span>${esc(t.name)}</span>${ms('edit')}</button>`).join('')}
+        ${editTpl === 'new' ? tplForm({}) : `<button class="btn ghost" data-act="tpl-edit" data-id="new">${ms('add')} Neue Vorlage</button>`}
+      </section>
+    </div>`;
+    $$('.tplform[data-id]', main).forEach(f => f.addEventListener('submit', ev => {
+      ev.preventDefault();
+      const d = new FormData(f);
+      const old = f.dataset.id ? S.template(f.dataset.id) : null;
+      editTpl = null;
+      S.saveTemplate({ ...(old || {}), name: String(d.get('name')).trim(), body: String(d.get('body')), tags: String(d.get('tags')).split(',').map(s => s.trim()).filter(Boolean) });
+      ui.built = null; render(); toast('Vorlage gespeichert');
+    }));
+    const f = $('.tplform', main);
+    if (f) f.querySelector('input[name="name"]').focus({ preventScroll: true });
+    ui.built = 'templates';
+  }
+
+  // ---------- Ansicht: Reisen freigeben ----------
+  function viewShare(main) {
+    // Die Freigabe aktualisiert sich selbst; nicht neu aufbauen, sonst gehen Eingaben und Fortschritt verloren
+    if (ui.built === 'share' && $('#share-box', main)) return;
+    main.innerHTML = `<div class="page">
+      <header class="page-head"><h1>Reisen freigeben</h1></header>
+      <section class="set"><div id="share-box"></div></section>
+    </div>`;
+    if (window.TB_SHARE) window.TB_SHARE.render($('#share-box', main));
+    ui.built = 'share';
+  }
+
   // ---------- Ansicht: Karte ----------
   let map = null, cluster = null, mapFitted = false;
   // Runde Bild-Kreise wie in Diarium; bei Gruppen steht die Anzahl in der Mitte.
@@ -981,8 +1025,8 @@
   }
 
   // ---------- Rahmen ----------
-  const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags, countries: viewCountries, habits: viewHabits, bucket: viewBucket, life: viewLife, finanzen: main => { window.TB_FINANZEN.view(main); ui.built = 'finanzen'; } };
-  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', travel: 'Reisekarte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten', bucket: 'Bucket-Liste', life: 'Das große Ganze', finanzen: 'Finanzen' };
+  const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags, countries: viewCountries, habits: viewHabits, bucket: viewBucket, life: viewLife, finanzen: main => { window.TB_FINANZEN.view(main); ui.built = 'finanzen'; }, templates: viewTemplates, share: viewShare };
+  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', travel: 'Reisekarte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten', bucket: 'Bucket-Liste', life: 'Das große Ganze', finanzen: 'Finanzen', templates: 'Vorlagen', share: 'Reisen freigeben' };
   function render() {
     $$('#nav [data-nav]').forEach(b => b.setAttribute('aria-current', b.dataset.nav === ui.view ? 'page' : 'false'));
     const isMap = ui.view === 'map';
@@ -1027,7 +1071,7 @@
     if (!ed && !$('#overlay').hidden) { editTpl = null; $('#overlay').hidden = true; $('#overlay').innerHTML = ''; }
     // „Suche“ ist die Zeitleiste mit Fokus im Suchfeld
     if (view === 'search') { go('timeline'); const q = $('#tl-q'); if (q) q.focus(); return; }
-    if (ui.view !== view) { ui.built = null; $('#main').scrollTop = 0; }
+    if (ui.view !== view) { ui.built = null; editTpl = null; $('#main').scrollTop = 0; }
     ui.view = view;
     openActiveGroup();
     render();
@@ -1483,21 +1527,9 @@
   function openSettings() {
     const o = $('#overlay');
     o.hidden = false;
-    const tpls = S.templates;
-    const tplForm = t => `<form class="tplform" data-id="${esc(t.id || '')}">
-      <input name="name" type="text" placeholder="Name der Vorlage" value="${esc(t.name || '')}" required>
-      <input name="tags" type="text" placeholder="Tags (mit Komma getrennt)" value="${esc((t.tags || []).join(', '))}">
-      <textarea name="body" rows="10" placeholder="Text der Vorlage. Zeilen mit ## werden zu Überschriften.">${esc(t.body || '')}</textarea>
-      <div class="row-btns">${t.id ? `<button type="button" class="btn danger ghost" data-act="tpl-delete" data-id="${esc(t.id)}">Löschen</button>` : ''}
-        <button type="button" class="btn ghost" data-act="tpl-cancel">Abbrechen</button><button class="btn">Speichern</button></div></form>`;
     o.innerHTML = `<div class="sheet" role="dialog" aria-label="Einstellungen">
       <header class="sheet-head"><button class="icon-btn" data-act="set-close" aria-label="Zurück">${ms('arrow_back')}</button><b>Einstellungen</b></header>
       <div class="sheet-body">
-        <section class="set"><h3>Vorlagen</h3><p class="hint">Vorlagen fügst du im Eintrag über das Dokument-Symbol oben ein.</p>
-          ${tpls.map(t => editTpl === t.id ? tplForm(t) : `<button class="listrow" data-act="tpl-edit" data-id="${esc(t.id)}">${ms('description')}<span>${esc(t.name)}</span>${ms('edit')}</button>`).join('')}
-          ${editTpl === 'new' ? tplForm({}) : `<button class="btn ghost" data-act="tpl-edit" data-id="new">${ms('add')} Neue Vorlage</button>`}
-        </section>
-
         <section class="set"><h3>Standort</h3>
           <label class="switch"><input type="checkbox" id="set-autoloc" ${autoLoc() ? 'checked' : ''}><span>Bei neuen Einträgen automatisch den aktuellen Standort speichern</span></label>
         </section>
@@ -1506,8 +1538,6 @@
           <p class="hint">Jeden Tag gegen 17 Uhr deutscher Zeit bekommst du eine Mitteilung, wenn der Tagebucheintrag, der Ort oder Gewohnheiten noch offen sind. Ist alles erledigt, kommt keine.</p>
           <div id="push-box"><p class="hint">Prüfe …</p></div>
         </section>
-
-        <section class="set"><h3>Reisen freigeben</h3><div id="share-box"></div></section>
 
         <section class="set"><h3>Synchronisation</h3>
           <p class="status" data-status="${esc(S.status)}"><i class="sync-dot"></i>${esc(S.statusText || 'Nur auf diesem Gerät gespeichert')}${S.unsynced && S.status !== 'ok' ? ' · Änderungen warten auf Upload' : ''}${S.pendingPhotos ? ` · ${S.pendingPhotos} Bild(er) warten auf Upload` : ''}</p>
@@ -1536,15 +1566,7 @@
       </div></div>`;
     pushBox();
     offlineReady();
-    if (window.TB_SHARE) window.TB_SHARE.render($('#share-box'));
     $('#set-autoloc').addEventListener('change', e => lsSet('tb-autoloc', e.target.checked ? '1' : '0'));
-    $$('.tplform[data-id]', o).forEach(f => f.addEventListener('submit', ev => {
-      ev.preventDefault();
-      const d = new FormData(f);
-      const old = f.dataset.id ? S.template(f.dataset.id) : null;
-      S.saveTemplate({ ...(old || {}), name: String(d.get('name')).trim(), body: String(d.get('body')), tags: String(d.get('tags')).split(',').map(s => s.trim()).filter(Boolean) });
-      editTpl = null; openSettings(); toast('Vorlage gespeichert');
-    }));
     const tf = $('#token-form');
     if (tf) tf.addEventListener('submit', async ev => {
       ev.preventDefault();
@@ -1733,9 +1755,9 @@
       m.hidden = false;
     },
     'ed-tpl': el => { $('#ed-tplmenu').hidden = true; const t = S.template(el.dataset.id); if (t) insertTemplate(t); },
-    'tpl-edit': el => { editTpl = el.dataset.id; openSettings(); },
-    'tpl-cancel': () => { editTpl = null; openSettings(); },
-    'tpl-delete': el => { if (!confirm('Diese Vorlage löschen?')) return; S.deleteTemplate(el.dataset.id); editTpl = null; openSettings(); },
+    'tpl-edit': el => { editTpl = el.dataset.id; ui.built = null; render(); },
+    'tpl-cancel': () => { editTpl = null; ui.built = null; render(); },
+    'tpl-delete': el => { if (!confirm('Diese Vorlage löschen?')) return; editTpl = null; S.deleteTemplate(el.dataset.id); ui.built = null; render(); },
     'sync-now': async () => { await S.sync(); if (settingsOpen()) openSettings(); toast(S.statusText); },
     'token-clear': () => { S.setToken(null); openSettings(); },
     export: () => {
