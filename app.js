@@ -1547,7 +1547,7 @@
         const data = JSON.parse((await f.text()).replace(/^\uFEFF/, ''));
         // Diarium exportiert eine Liste von Einträgen mit "date" und "html"
         const n = S.importData(Array.isArray(data) ? { entries: fromDiarium(data) } : data);
-        toast(n ? `${n} Einträge übernommen` : 'Keine neuen Einträge in dieser Datei');
+        toast(n ? `${n.toLocaleString('de-DE')} neue Daten übernommen` : 'Keine neuen Daten in dieser Datei – alles ist schon vorhanden');
       }
       catch { toast('Diese Datei konnte nicht gelesen werden.'); }
     });

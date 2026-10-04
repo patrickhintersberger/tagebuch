@@ -649,12 +649,13 @@
       let n = 0;
       // Nur fehlende Einträge übernehmen, vorhandene bleiben unverändert.
       (data.entries || []).forEach(e => { if (e && e.id && !store.entries[e.id]) { store.entries[e.id] = { ...e, updatedAt: now }; markDirty(yearOf(e)); n++; } });
-      (data.templates || []).forEach(t => { if (t && t.id && !store.templates[t.id]) { store.templates[t.id] = { ...t, updatedAt: now }; markDirty('templates'); } });
-      (data.bucket || []).forEach(b => { if (b && b.id && !store.bucket[b.id]) { store.bucket[b.id] = { ...b, updatedAt: now }; markDirty('bucket'); } });
-      (data.habits || []).forEach(h => { if (h && h.id && !store.habits[h.id]) { store.habits[h.id] = { ...h, updatedAt: now }; markDirty('habits'); } });
-      (data.logs || []).forEach(l => { if (l && l.id && l.date && !store.logs[l.id]) { store.logs[l.id] = { ...l, updatedAt: now }; markDirty('h' + yearOf(l)); } });
-      (data.finance || []).forEach(f => { if (f && f.id && f.date && !store.finance[f.id]) { store.finance[f.id] = { ...f, updatedAt: now }; markDirty('f' + yearOf(f)); } });
-      (data.fmeta || []).forEach(m => { if (m && m.id && !store.fmeta[m.id]) { store.fmeta[m.id] = { ...m, updatedAt: now }; markDirty('fmeta'); } });
+      // Zählt alles Neue (Einträge, Vorlagen, Ziele, Gewohnheiten, Finanzen), damit die Meldung beim Einlesen stimmt
+      (data.templates || []).forEach(t => { if (t && t.id && !store.templates[t.id]) { store.templates[t.id] = { ...t, updatedAt: now }; markDirty('templates'); n++; } });
+      (data.bucket || []).forEach(b => { if (b && b.id && !store.bucket[b.id]) { store.bucket[b.id] = { ...b, updatedAt: now }; markDirty('bucket'); n++; } });
+      (data.habits || []).forEach(h => { if (h && h.id && !store.habits[h.id]) { store.habits[h.id] = { ...h, updatedAt: now }; markDirty('habits'); n++; } });
+      (data.logs || []).forEach(l => { if (l && l.id && l.date && !store.logs[l.id]) { store.logs[l.id] = { ...l, updatedAt: now }; markDirty('h' + yearOf(l)); n++; } });
+      (data.finance || []).forEach(f => { if (f && f.id && f.date && !store.finance[f.id]) { store.finance[f.id] = { ...f, updatedAt: now }; markDirty('f' + yearOf(f)); n++; } });
+      (data.fmeta || []).forEach(m => { if (m && m.id && !store.fmeta[m.id]) { store.fmeta[m.id] = { ...m, updatedAt: now }; markDirty('fmeta'); n++; } });
       emit(); schedulePush();
       return n;
     },
