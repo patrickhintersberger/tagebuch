@@ -1211,6 +1211,7 @@
     };
     const e = ed.entry;
     e.tags = e.tags || []; e.photos = e.photos || [];
+    ed.base = clone(e); // Stand beim Öffnen: gespeichert wird nur, was hier geändert wurde
     const o = $('#overlay');
     o.hidden = false;
     o.innerHTML = `<div class="sheet editor" role="dialog" aria-label="Eintrag">
@@ -1362,6 +1363,32 @@
     e.date = $('#ed-date').value || e.date;
     e.time = $('#ed-time').value || '';
   }
+  const clone = x => JSON.parse(JSON.stringify(x));
+  // Felder, die im Editor seit dem Öffnen geändert wurden
+  function edChanges() {
+    if (!ed || !ed.base) return null;
+    // leer, null, fehlend und leere Liste gelten als gleich (z. B. leeres Uhrzeit-Feld)
+    const norm = v => v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length) ? 'null' : JSON.stringify(v);
+    return Object.keys({ ...ed.entry, ...ed.base }).filter(k => k !== 'createdAt' && k !== 'updatedAt' && norm(ed.entry[k]) !== norm(ed.base[k]));
+  }
+  // Eintrag im Editor auf einen neueren Stand setzen (z. B. nach einer Synchronisation), ohne Eingaben zu verlieren
+  function edRefresh() {
+    const e = ed.entry;
+    const set = (id, v) => { const el = $('#' + id); if (el && el !== document.activeElement && el.value !== v) el.value = v; };
+    set('ed-text', e.text || ''); set('ed-title', e.title || ''); set('ed-date', e.date); set('ed-time', e.time || '');
+    edHead(); edRate(); edTags(); edLoc(); edPhotos(); grow();
+    if (ed.mode === 'read') edRead();
+  }
+  // Eine neuere Fassung kam per Synchronisation an: übernehmen, solange im Editor nichts geändert wurde
+  function edSync() {
+    if (!ed || ed.isNew) return;
+    const latest = S.entry(ed.entry.id);
+    if (!latest || (latest.updatedAt || 0) <= (ed.base.updatedAt || 0)) return;
+    readInputs();
+    if (edChanges().length) return; // eigene Änderungen haben Vorrang; beim Speichern wird zusammengeführt
+    ed.entry = { tags: [], photos: [], ...clone(latest) }; ed.base = clone(ed.entry);
+    edRefresh();
+  }
   function commit() {
     if (!ed) return;
     clearTimeout(ed.timer);
@@ -1369,8 +1396,20 @@
     if (!hasContent(ed.entry) && ed.isNew) return;
     const before = S.entry(ed.entry.id);
     const strip = x => { const { createdAt, updatedAt, ...rest } = x || {}; return JSON.stringify(rest); };
+    if (!ed.isNew && before) {
+      // Nur die im Editor geänderten Felder auf den neuesten Stand legen. So überschreibt ein lange offener
+      // Eintrag keine Änderungen, die inzwischen von einem anderen Gerät oder einer Routine gekommen sind.
+      const changed = edChanges();
+      if (!changed.length) return;
+      const merged = { tags: [], photos: [], ...clone(before) };
+      changed.forEach(k => { merged[k] = ed.entry[k]; });
+      const stale = (before.updatedAt || 0) > (ed.base.updatedAt || 0);
+      ed.entry = merged;
+      if (stale) edRefresh();
+    }
     if (before && strip(before) === strip(ed.entry)) return;
-    S.saveEntry(ed.entry);
+    const saved = S.saveEntry(ed.entry);
+    ed.base = clone(saved || S.entry(ed.entry.id) || ed.entry);
     ed.isNew = false;
   }
   function scheduleCommit() { if (!ed) return; clearTimeout(ed.timer); ed.timer = setTimeout(commit, 700); }
@@ -1980,7 +2019,7 @@
       // Während ein Formular in den Einstellungen offen ist, nichts darunter neu aufbauen, was den Fokus stört
       if (ui.view === 'timeline' && ui.built === 'timeline') { timelineList(); render(); }
       else render();
-      if (ed) edMemory();
+      if (ed) { edMemory(); edSync(); }
     });
     render();
     Promise.resolve(S.sync()).then(repairPosters).then(() => window.TB_SHARE && window.TB_SHARE.cleanup());
