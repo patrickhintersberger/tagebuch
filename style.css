@@ -542,18 +542,20 @@ img.missing { opacity: .35; }
 .fin-cat small { color: var(--ink-3); font-size: 12px; }
 .fin-rules { margin-top: 14px; }
 
-/* Menü-Gruppen (Tagebuch, Reisen, Finanzen, Das große Ganze) */
+/* Menü-Gruppen zum Auf- und Zuklappen (Tagebuch, Reisen) */
 .nav .nav-h { display: none; }
+.nav-grp.closed .nav-items { display: none; }
+.nav-grp .nav-h .ms { margin-left: auto; font-size: 20px; transition: transform .15s; }
+.nav-grp.closed .nav-h .ms { transform: rotate(-90deg); }
 @media (min-width: 900px) {
   .nav { overflow-y: auto; }
-  .nav .nav-h { display: block; padding: 14px 12px 4px; font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
-  .nav .brand + .nav-h { padding-top: 0; }
-  .nav button { height: 38px; }
+  .nav button { height: 40px; }
 }
-@media (max-width: 899px) {
-  .nav .nav-h { display: block; padding: 14px 12px 4px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
-  .nav .brand + .nav-h { padding-top: 0; }
-  .nav button { height: 44px; }
+@media (min-width: 900px), (max-width: 899px) {
+  .nav .nav-h { display: flex; flex-direction: row; align-items: center; gap: 6px; width: 100%; height: 32px; margin-top: 8px; padding: 0 12px; border: 0; border-radius: 8px; background: none; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+  .nav .nav-h:hover { background: var(--surface-2); }
+  .nav .nav-items { display: flex; flex-direction: column; gap: 2px; }
+  .nav-grp + button { margin-top: 10px; }
 }
 .fin-chart { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 12px 8px; }
 .fin-chart svg { width: 100%; height: auto; display: block; }

@@ -981,7 +981,7 @@
 
   // ---------- Rahmen ----------
   const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags, countries: viewCountries, habits: viewHabits, bucket: viewBucket, life: viewLife, finanzen: main => { window.TB_FINANZEN.view(main); ui.built = 'finanzen'; } };
-  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', travel: 'Reisekarte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten', bucket: 'Bucket-Liste', life: 'Lebenszeit', finanzen: 'Finanzen' };
+  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', travel: 'Reisekarte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten', bucket: 'Bucket-Liste', life: 'Das große Ganze', finanzen: 'Finanzen' };
   function render() {
     $$('#nav [data-nav]').forEach(b => b.setAttribute('aria-current', b.dataset.nav === ui.view ? 'page' : 'false'));
     const isMap = ui.view === 'map';
@@ -1028,9 +1028,29 @@
     if (view === 'search') { go('timeline'); const q = $('#tl-q'); if (q) q.focus(); return; }
     if (ui.view !== view) { ui.built = null; $('#main').scrollTop = 0; }
     ui.view = view;
+    openActiveGroup();
     render();
   }
 
+  // Aufklappbare Menü-Gruppen; der Zustand bleibt auf dem Gerät gespeichert
+  function setGroup(g, open) {
+    if (!g) return;
+    g.classList.toggle('closed', !open);
+    $('.nav-h', g).setAttribute('aria-expanded', open ? 'true' : 'false');
+    let closed = [];
+    try { closed = JSON.parse(lsGet('tb-navgrp') || '[]'); } catch {}
+    closed = closed.filter(x => x !== g.dataset.grp);
+    if (!open) closed.push(g.dataset.grp);
+    lsSet('tb-navgrp', JSON.stringify(closed));
+  }
+  function initGroups() {
+    let closed = [];
+    try { closed = JSON.parse(lsGet('tb-navgrp') || '[]'); } catch {}
+    $$('#nav .nav-grp').forEach(g => { const c = closed.includes(g.dataset.grp); g.classList.toggle('closed', c); $('.nav-h', g).setAttribute('aria-expanded', c ? 'false' : 'true'); });
+    openActiveGroup();
+  }
+  // Die Gruppe der gerade geöffneten Seite immer aufklappen
+  function openActiveGroup() { const b = $(`#nav [data-nav="${ui.view}"]`); const g = b && b.closest('.nav-grp'); if (g && g.classList.contains('closed')) setGroup(g, true); }
   function closeMenu() { $('#nav').classList.remove('open'); $('#nav-backdrop').hidden = true; }
   let toastTimer = null;
   function toast(text) {
@@ -1625,6 +1645,7 @@
     'cal-day': el => openDay(el.dataset.date),
     menu: () => { $('#nav').classList.add('open'); $('#nav-backdrop').hidden = false; },
     'menu-close': closeMenu,
+    'nav-grp': el => setGroup(el.closest('.nav-grp'), el.closest('.nav-grp').classList.contains('closed')),
     'care-open': openCare,
     'hb-date': el => { ui.hbDate = el.dataset.date; render(); },
     'hb-today': () => { ui.hbDate = todayISO(); ui.built = null; render(); },
@@ -1768,6 +1789,7 @@
   }
 
   // ---------- Start ----------
+  initGroups();
   S.ready.then(() => {
     S.onChange(() => {
       // Während ein Formular in den Einstellungen offen ist, nichts darunter neu aufbauen, was den Fokus stört
