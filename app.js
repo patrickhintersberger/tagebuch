@@ -589,6 +589,84 @@
     }
     return out.filter(l => !/^([-*•]|\d+\.)?\s*$/.test(l)).join('\n');
   }
+  // Zahlen und Feedback der Woche: Tagebuch, Gewohnheiten im Vergleich zur Vorwoche, Hinweise und Vorschläge
+  function weekStats(start, days, ents) {
+    const end = days[6], today = todayISO();
+    const past = days.filter(d => d <= today);
+    const short = d => parse(d).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+    const wd = d => WD[parse(d).getDay()];
+    const L = [];
+    const withEntry = new Set(ents.map(e => e.date));
+    const missing = past.filter(d => !withEntry.has(d));
+    const noEvening = past.filter(d => withEntry.has(d) && !ents.some(e => e.date === d && Object.values(DAY_Q).some(r => answerAfter(e.text, r))));
+    const rated = ents.filter(e => e.rating);
+    L.push('## Tagebuch in Zahlen');
+    L.push(`- Einträge an ${withEntry.size} von ${past.length} Tagen${missing.length ? ` (ohne Eintrag: ${missing.map(d => wd(d) + ' ' + short(d)).join(', ')})` : ''}`);
+    if (noEvening.length) L.push(`- Abendroutine nicht ausgefüllt: ${noEvening.map(d => wd(d) + ' ' + short(d)).join(', ')}`);
+    if (rated.length) {
+      const best = rated.reduce((a, b) => b.rating > a.rating ? b : a), worst = rated.reduce((a, b) => b.rating < a.rating ? b : a);
+      L.push(`- Bester Tag: ${wd(best.date)} mit ${best.rating}${worst !== best ? `, schwächster: ${wd(worst.date)} mit ${worst.rating}` : ''}`);
+    }
+    const places = [...new Set(ents.filter(e => e.loc && e.loc.name).map(e => e.loc.name.split(',').slice(-2).map(x => x.trim()).join(', ')))];
+    if (places.length) L.push(`- Orte: ${places.join(' · ')}`);
+    const tagc = new Map(); ents.forEach(e => (e.tags || []).forEach(t => tagc.set(t, (tagc.get(t) || 0) + 1)));
+    if (tagc.size) L.push(`- Tags: ${[...tagc].map(([t, n]) => n > 1 ? `${t} (${n}×)` : t).join(', ')}`);
+    // Gewohnheiten
+    const idx = habitIndex();
+    const good = [], weak = [], notes = [];
+    const habits = S.habits.filter(h => !h.archived && hbStart(h) <= end);
+    if (habits.length) L.push('', '## Gewohnheiten');
+    habits.forEach(h => {
+      const dv = idx.get(h.id) || new Map();
+      const act = past.filter(d => d >= hbStart(h));
+      if (!act.length) return;
+      const okDays = act.filter(d => hbDone(h, dv.get(d))).length;
+      const prev = days.map(d => addDays(d, -7)).filter(d => d >= hbStart(h));
+      const prevOk = prev.filter(d => hbDone(h, dv.get(d))).length;
+      const unitPrev = h.kind === 'avoid' ? `${prevOk} Tage gehalten` : hbDaily(h) ? `${prevOk} Tage` : `${prevOk}×`;
+      const trend = prev.length ? (okDays - prevOk > 0 ? ` (besser als Vorwoche: ${unitPrev})` : okDays - prevOk < 0 ? ` (schlechter als Vorwoche: ${unitPrev})` : ' (wie Vorwoche)') : '';
+      const st = hbStreak(h, dv, today);
+      const streak = st.n > 1 ? ` · Serie ${st.n} ${st.unit}` : '';
+      if (h.kind === 'avoid') {
+        const slips = act.length - okDays;
+        L.push(`- ${h.icon || ''} ${h.name}: ${okDays} von ${act.length} Tagen gehalten${slips ? `, ${slips} Ausrutscher` : ''}${trend}${streak}`);
+        (slips ? weak : good).push(h.name);
+        if (slips >= 2) notes.push(`${h.name}: ${slips} Ausrutscher. Was war an diesen Tagen anders?`);
+      } else if (!hbDaily(h)) {
+        const goal = h.perWeek;
+        L.push(`- ${h.icon || ''} ${h.name}: ${okDays} von ${goal}× ${okDays >= goal ? '✓' : '✗'}${trend}${streak}`);
+        (okDays >= goal ? good : weak).push(h.name);
+        if (okDays < goal) notes.push(`${h.name}: Wochenziel ${goal}× verfehlt (${okDays}×). Feste Tage im Kalender blocken.`);
+      } else {
+        const pct = Math.round(okDays / act.length * 100);
+        let extra = '';
+        if ((h.target || 1) > 1) {
+          const vals = act.map(d => dv.get(d) || 0), avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+          extra = ` · Schnitt ${Math.round(avg).toLocaleString('de-DE')} von ${(+h.target).toLocaleString('de-DE')}${h.unit ? ' ' + h.unit : ''}`;
+        }
+        L.push(`- ${h.icon || ''} ${h.name}: ${okDays} von ${act.length} Tagen (${pct} %)${extra}${trend}${streak}`);
+        (pct === 100 ? good : pct < 70 ? weak : []).push(h.name);
+        if (pct < 70) notes.push(`${h.name}: nur ${okDays} von ${act.length} Tagen. An eine feste Uhrzeit oder Gewohnheit koppeln.`);
+      }
+    });
+    // Feedback
+    L.push('', '## Feedback');
+    const fb = L.length;
+    if (good.length) L.push(`- Stark: ${good.join(', ')}`);
+    if (weak.length) L.push(`- Mehr Aufmerksamkeit: ${weak.join(', ')}`);
+    notes.forEach(n => L.push('- ' + n));
+    if (missing.length >= 2) L.push(`- ${missing.length} Tage ohne Tagebucheintrag. Für den Länderzähler zählt jeder Tag mit Ort.`);
+    if (noEvening.length >= 2) L.push(`- An ${noEvening.length} Tagen fehlt die Abendroutine. Genau diese Antworten füllen das Wochen-Review.`);
+    if (L.length === fb) L.push('- Alles im grünen Bereich.');
+    // Vorschläge
+    const sug = bucketSuggestions(3);
+    if (weak.length || sug.length) {
+      L.push('', '## Für nächste Woche');
+      if (weak.length) L.push(`- Fokus-Gewohnheit: ${weak[0]}`);
+      sug.forEach(({ b, reason }) => L.push(`- Bucket-Liste: ${b.title} (${reason})`));
+    }
+    return L;
+  }
   function buildWeekReview(start) {
     const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
     const end = days[6], today = todayISO();
@@ -639,6 +717,7 @@
       '## Was muss ich nächste Woche machen, um noch besser zu werden? (3 Punkte)', '1. ', '2. ', '3. ', '',
       '## Meine letzten Wochenaufgaben', ...(lastTasks ? [block(lastTasks)] : []), '',
       '## Was sind die 3 wichtigsten Aufgaben nächste Woche?', '1. ', '2. ', '3. ', '',
+      ...weekStats(start, days, ents), '',
     ];
     return { title: `Wochen-Review ${short(start)}–${short(end)}`, text: L.join('\n'), date: end > today ? today : end };
   }
