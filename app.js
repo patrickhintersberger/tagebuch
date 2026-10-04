@@ -1202,7 +1202,6 @@
   function openEditor(id, preset = {}) {
     const existing = id && S.entry(id);
     const now = new Date();
-    aiMsg = '';
     ed = {
       isNew: !existing,
       entry: existing ? JSON.parse(JSON.stringify(existing)) : {
@@ -1228,7 +1227,6 @@
         <div class="ed-when"><input type="date" id="ed-date" value="${esc(e.date)}" aria-label="Datum"><input type="time" id="ed-time" value="${esc(e.time || '')}" aria-label="Uhrzeit"></div>
         <input id="ed-title" class="ed-title" type="text" placeholder="Titel" value="${esc(e.title)}" autocomplete="off">
         <textarea id="ed-text" class="ed-text" placeholder="Was ist heute passiert?">${esc(e.text)}</textarea>
-        ${isWeekReview(e) ? '<section class="field ed-ai" id="ed-ai"></section>' : ''}
 
         <section class="field"><label>${ms('star')} Bewertung des Tages</label><div class="rate" id="ed-rate"></div></section>
         <section class="field"><label>${ms('sell')} Tags</label><div id="ed-tags"></div></section>
@@ -1238,7 +1236,7 @@
         <div id="ed-memory"></div>
       </div>
     </div>`;
-    edHead(); edRate(); edTags(); edLoc(); edPhotos(); edMemory(); edAi(); grow();
+    edHead(); edRate(); edTags(); edLoc(); edPhotos(); edMemory(); grow();
     ['ed-title', 'ed-text', 'ed-time'].forEach(i => $('#' + i).addEventListener('input', () => { if (i === 'ed-text') grow(); scheduleCommit(); }));
     // Tab rückt im Text ein (statt zum nächsten Feld zu springen), Umschalt+Tab nimmt den Einzug zurück.
     // Mit markierten Zeilen gilt das für alle markierten Zeilen.
@@ -1318,64 +1316,6 @@
     render();
     S.sync();
   }
-  // ---------- Feedback von Claude (nur im Wochen-Review) ----------
-  const isWeekReview = e => (e.tags || []).includes('Wochen-Review') || /^Wochen-?review/i.test(e.title || '');
-  let aiBusy = false, aiMsg = ''; // aiMsg: letzte Fehlermeldung, bleibt sichtbar
-  function edAi() {
-    const box = $('#ed-ai'); const C = window.TB_CLAUDE;
-    if (!box || !C) return;
-    if (!C.getKey()) {
-      box.innerHTML = `<label>${ms('auto_awesome')} Feedback von Claude</label>
-        <p class="hint">Claude liest dein Wochen-Review (und das der Vorwoche) und gibt dir Feedback: Muster der Woche, was im Review fehlt, ob die letzten Ziele erreicht wurden, und drei Vorschläge. Dafür brauchst du einmal einen eigenen API-Schlüssel von Anthropic. Er bleibt nur auf diesem Gerät. Ein Feedback kostet grob 3–8 Cent.</p>
-        <form id="ai-key" class="tplform"><input name="key" type="password" placeholder="API-Schlüssel (sk-ant-…)" autocomplete="off" required><button class="btn">Speichern</button></form>
-        <details><summary>So bekommst du einen Schlüssel</summary><ol>
-          <li>Auf <b>console.anthropic.com</b> anmelden bzw. ein Konto anlegen.</li>
-          <li>Unter „Billing“ etwas Guthaben aufladen (z. B. 5 €).</li>
-          <li>Unter „API Keys“ → „Create Key“ einen Schlüssel erstellen, kopieren und hier einfügen.</li></ol></details>`;
-      $('#ai-key').addEventListener('submit', ev => { ev.preventDefault(); C.setKey(String(new FormData(ev.target).get('key')).trim()); edAi(); toast('Schlüssel gespeichert'); });
-      return;
-    }
-    const has = C.hasFeedback(ed.entry.text);
-    box.innerHTML = `<label>${ms('auto_awesome')} Feedback von Claude</label>
-      <div class="row-btns left"><button class="btn" data-act="ai-run" ${aiBusy ? 'disabled' : ''}>${ms('auto_awesome')} ${has ? 'Neues Feedback holen' : 'Feedback holen'}</button>
-      <button class="btn ghost" data-act="ai-key-clear">Schlüssel ändern</button></div>
-      <p class="hint${aiMsg ? ' warn' : ''}" id="ai-status">${aiMsg ? esc(aiMsg) : has ? 'Das Feedback steht unten im Text. Ein neues ersetzt es.' : 'Am besten erst, wenn du deine Antworten eingetragen hast. Das Feedback wird unten an den Text angehängt.'}</p>
-      <div class="ai-live" id="ai-live" hidden></div>`;
-  }
-  async function runAi() {
-    if (aiBusy || !ed) return;
-    readInputs();
-    const entryId = ed.entry.id, date = ed.entry.date;
-    const prev = S.entries.filter(x => isWeekReview(x) && x.id !== entryId && x.date < date).sort((a, b) => b.date.localeCompare(a.date))[0];
-    aiBusy = true; aiMsg = ''; edAi();
-    const live = $('#ai-live'), status = $('#ai-status');
-    status.textContent = 'Claude liest dein Review …';
-    let got = '';
-    try {
-      const fb = await window.TB_CLAUDE.feedback(ed.entry.text, prev && prev.text, d => {
-        got += d;
-        const l = $('#ai-live'); if (l) { l.hidden = false; l.textContent = got; }
-        const st = $('#ai-status'); if (st) st.textContent = 'Claude schreibt …';
-      });
-      // Eintrag zwischendurch geschlossen? Dann direkt im gespeicherten Eintrag ergänzen
-      if (ed && ed.entry.id === entryId) {
-        readInputs();
-        ed.entry.text = window.TB_CLAUDE.attach(ed.entry.text, fb);
-        $('#ed-text').value = ed.entry.text; grow(); scheduleCommit();
-      } else {
-        const cur = S.entry(entryId);
-        if (cur) S.saveEntry({ ...cur, text: window.TB_CLAUDE.attach(cur.text, fb) });
-      }
-      toast('Feedback von Claude eingefügt');
-    } catch (err) {
-      toast(err.message);
-      aiMsg = err.message;
-    } finally {
-      aiBusy = false;
-      if (ed && ed.entry.id === entryId) { edAi(); const l = $('#ai-live'); if (l) l.hidden = true; }
-    }
-  }
-
   function edHead() { $('#ed-head').textContent = fmtLong(ed.entry.date); }
   function edMemory() { $('#ed-memory').innerHTML = memoryBlock(ed.entry.date, true); }
   function edRate() {
@@ -1893,8 +1833,6 @@
     'ed-loc-pick': el => setLoc(el.dataset.lat, el.dataset.lng, el.dataset.name),
     'ed-photo-add': () => $('#ed-file').click(),
     'ed-strike': () => strikeText(),
-    'ai-run': () => runAi(),
-    'ai-key-clear': () => { if (!confirm('Den gespeicherten API-Schlüssel von diesem Gerät entfernen?')) return; window.TB_CLAUDE.setKey(''); aiMsg = ''; edAi(); },
     'ed-photo-cover': el => { const ph = ed.entry.photos; const i = ph.findIndex(p => p.id === el.dataset.id); if (i > 0) { ph.unshift(ph.splice(i, 1)[0]); edPhotos(); scheduleCommit(); toast('Titelbild geändert'); } },
     'ed-photo-del': el => { ed.entry.photos = ed.entry.photos.filter(p => p.id !== el.dataset.id); edPhotos(); scheduleCommit(); },
     'ed-templates': () => {
