@@ -16,7 +16,8 @@
   const XLSX_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
 
   // ---------- Kategorien (Zeilen der Jahresübersicht) ----------
-  // g: in = Einnahme, out = private Ausgabe, biz = geschäftliche Ausgabe, save = Sparen & Anlegen, skip = zählt nicht
+  // g: in = Einnahme, out = private Ausgabe, biz = geschäftliche Ausgabe, prop = Immobilie (Kauf & Umbau über Kredit),
+  //    save = Sparen & Anlegen, skip = zählt nicht
   const CATS = [
     ['in', 'Gehalt vom Hauptjob'], ['in', 'Empfehlungsmarketing'], ['in', 'Stuff-Verkäufe / Ebay'], ['in', 'Rückzahlungen'], ['in', 'Vermietung'],
     ['in', 'Geldgeschenke, sonstiges, Urlaubsgeld, Bonus'],
@@ -29,10 +30,11 @@
     ['biz', 'Equipment'], ['biz', 'Leasing'], ['biz', 'Putzkraft'], ['biz', 'Software (Adobe / frame.io / etc.)'], ['biz', 'Autokosten Geschäftlich'],
     ['biz', 'Fahrtkosten (Bahn / Auto / Benzin)'], ['biz', 'Unterkunft / Hotel'], ['biz', 'Rechtliches'], ['biz', 'Sonstiges'], ['biz', 'Bücher'], ['biz', 'Marketing'],
     ['biz', 'Weiterbildung / Seminare'], ['biz', 'Mitarbeiter / Gehälter'], ['biz', 'Bankgebühren'], ['biz', 'Steuerberater'], ['biz', 'Steuer'],
+    ['prop', 'Immobilie (Kauf & Umbau)'],
     ['save', 'Sparen & Anlegen'],
     ['skip', 'Umbuchung (zählt nicht)'],
   ].map(([g, name]) => ({ g, name }));
-  const GROUPS = [['in', 'Einnahmen'], ['out', 'Ausgaben privat'], ['biz', 'Ausgaben geschäftlich'], ['save', 'Sparen & Anlegen'], ['skip', 'Zählt nicht']];
+  const GROUPS = [['in', 'Einnahmen'], ['out', 'Ausgaben privat'], ['biz', 'Ausgaben geschäftlich'], ['prop', 'Immobilie (über Kredit)'], ['save', 'Sparen & Anlegen'], ['skip', 'Zählt nicht']];
   const catGroup = name => (CATS.find(c => c.name === name) || {}).g;
 
   // Grundregeln für Bank-CSV ohne Kategorie; eigene Regeln (aus „Immer so“) haben Vorrang.
@@ -81,6 +83,10 @@
   // „Gehalt vom Hauptjob“ sind wie in der Jahresübersicht die Zahlungseingänge auf dem Geschäftskonto.
   // Dasselbe Etikett auf Privatkonten ist das Geld, das vom Geschäftskonto herüberkommt: zählt nicht doppelt.
   const BUSINESS_ACCOUNT = /geschaeftskonto|geschäftskonto/i;
+  // Hauskauf und Umbau laufen über den Kredit und gehören nicht zu den laufenden Ausgaben:
+  // Auszahlungen vom Kreditkonto (außer Umbuchungen) und einzelne Bau-/Renovierungsrechnungen ab 5.000 €.
+  const LOAN_ACCOUNT = /kreditkonto/i;
+  const BIG_BUILD = -500000;
 
   const userRules = () => S.fmeta.filter(m => m.type === 'rule' && m.match && m.cat);
   const norm = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -97,6 +103,7 @@
     if (fg) {
       let cat = FG_SUB[fg] || FG_MAIN[fg.split(' / ')[0]];
       if (cat === 'Gehalt vom Hauptjob' && !BUSINESS_ACCOUNT.test(t.account || '')) cat = 'Umbuchung (zählt nicht)';
+      if (t.amount < 0 && cat !== 'Umbuchung (zählt nicht)' && (LOAN_ACCOUNT.test(t.account || '') || (cat === 'Bauen und Renovieren' && t.amount <= BIG_BUILD))) cat = 'Immobilie (Kauf & Umbau)';
       // Gutschriften in einer Ausgaben-Kategorie (Erstattung, Rückgabe) zählen wie in der Jahresübersicht als Rückzahlung
       if (cat && t.amount > 0 && ['out', 'biz'].includes(catGroup(cat))) cat = 'Rückzahlungen';
       if (cat) return { cat, how: 'finanzguru' };
@@ -263,6 +270,7 @@
     const out = -sum(sel, 'out');
     const biz = -sum(sel, 'biz');
     const saved = -sum(sel, 'save');
+    const prop = -sum(sel, 'prop');
     const left = income - out - biz;
     const rate = income > 0 ? Math.round((left / income) * 100) : null;
     const period = ui.month === null ? ui.year : `${MONTHS_LONG[ui.month]} ${ui.year}`;
@@ -312,7 +320,7 @@
         <div><span>Ausgaben geschäftlich</span><b>${eur0(biz)}</b></div>
         <div><span>Übrig</span><b class="${left >= 0 ? 'ok' : 'bad'}">${eur0(left)}</b><small>${rate === null ? '' : `Sparquote ${rate} %`}</small></div>
       </section>
-      ${saved ? `<p class="hint">Davon gespart und angelegt: ${eur0(saved)}.</p>` : ''}
+      ${saved || prop ? `<p class="hint">${[saved ? `Gespart und angelegt: ${eur0(saved)}` : '', prop ? `Immobilie (Kauf & Umbau über Kredit, nicht in den Ausgaben): ${eur0(prop)}` : ''].filter(Boolean).join(' · ')}.</p>` : ''}
       <h2 class="ct-h">Jahresübersicht ${esc(ui.year)}</h2>
       <div class="ct-table fin-table"><table><thead><tr><th></th>${MONTHS.map((m, i) => `<th class="${ui.month === i ? 'sel' : ''}">${m}${src[i] ? `<small title="${src[i] === 'N' ? 'Werte aus der Numbers-Jahresübersicht' : 'Werte aus den Buchungen'}">${src[i] === 'N' ? 'Numbers' : 'Buchungen'}</small>` : ''}</th>`).join('')}<th>Gesamt</th><th>Ø Monat</th></tr></thead><tbody>${table || '<tr><td colspan="15" class="hint">Noch nichts zugeordnet.</td></tr>'}</tbody></table></div>
       <h2 class="ct-h">Buchungen</h2>
