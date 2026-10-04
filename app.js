@@ -274,6 +274,7 @@
     return geoLoading;
   }
   const ccCache = new Map();
+  window.TB_GEO = { load: loadGeo, at: (lat, lng) => countryAt(lat, lng), ready: () => !!geo };
   function countryAt(lat, lng) {
     const key = lat.toFixed(2) + ',' + lng.toFixed(2);
     if (ccCache.has(key)) return ccCache.get(key);
@@ -1053,6 +1054,7 @@
   function openActiveGroup() { const b = $(`#nav [data-nav="${ui.view}"]`); const g = b && b.closest('.nav-grp'); if (g && g.classList.contains('closed')) setGroup(g, true); }
   function closeMenu() { $('#nav').classList.remove('open'); $('#nav-backdrop').hidden = true; }
   let toastTimer = null;
+  window.TB_toast = text => toast(text);
   function toast(text) {
     const t = $('#toast');
     t.textContent = text;
@@ -1505,6 +1507,8 @@
           <div id="push-box"><p class="hint">Prüfe …</p></div>
         </section>
 
+        <section class="set"><h3>Reisen freigeben</h3><div id="share-box"></div></section>
+
         <section class="set"><h3>Synchronisation</h3>
           <p class="status" data-status="${esc(S.status)}"><i class="sync-dot"></i>${esc(S.statusText || 'Nur auf diesem Gerät gespeichert')}${S.unsynced && S.status !== 'ok' ? ' · Änderungen warten auf Upload' : ''}${S.pendingPhotos ? ` · ${S.pendingPhotos} Bild(er) warten auf Upload` : ''}</p>
           <p class="hint" id="offline-ready"></p>
@@ -1532,6 +1536,7 @@
       </div></div>`;
     pushBox();
     offlineReady();
+    if (window.TB_SHARE) window.TB_SHARE.render($('#share-box'));
     $('#set-autoloc').addEventListener('change', e => lsSet('tb-autoloc', e.target.checked ? '1' : '0'));
     $$('.tplform[data-id]', o).forEach(f => f.addEventListener('submit', ev => {
       ev.preventDefault();
@@ -1798,7 +1803,7 @@
       if (ed) edMemory();
     });
     render();
-    Promise.resolve(S.sync()).then(repairPosters);
+    Promise.resolve(S.sync()).then(repairPosters).then(() => window.TB_SHARE && window.TB_SHARE.cleanup());
   });
 
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
