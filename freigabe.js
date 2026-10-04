@@ -38,9 +38,14 @@
         body: body ? JSON.stringify(body) : undefined,
       });
     } catch { throw new Error('Keine Verbindung. Freigaben gehen nur mit Internet.'); }
-    if (res.status === 401) throw new Error('GitHub kennt den Token nicht (mehr). Bitte in den Einstellungen neu verbinden.');
-    if (res.status === 403 || res.status === 404) throw Object.assign(new Error(NO_ACCESS), { status: res.status });
-    if (!res.ok) throw Object.assign(new Error(`GitHub antwortet mit Fehler ${res.status}.`), { status: res.status });
+    if (!res.ok) {
+      // Originalmeldung von GitHub mit anzeigen, damit sich die Ursache erkennen lässt
+      let gm = ''; try { gm = (await res.json()).message || ''; } catch {}
+      const detail = ` (GitHub: ${res.status}${gm ? ' – ' + gm : ''}, bei ${method} ${path.split('?')[0]})`;
+      if (res.status === 401) throw new Error('GitHub kennt den Token nicht (mehr). Bitte in den Einstellungen neu verbinden.' + detail);
+      if (res.status === 403 || res.status === 404) throw Object.assign(new Error(NO_ACCESS + detail), { status: res.status });
+      throw Object.assign(new Error(`GitHub antwortet mit Fehler ${res.status}.` + detail), { status: res.status });
+    }
     return res.status === 204 ? null : res.json();
   }
   function b64(bytes) {
