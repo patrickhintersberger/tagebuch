@@ -514,7 +514,10 @@ img.missing { opacity: .35; }
 .fin-msg { background: var(--accent-soft); color: var(--ink); border-radius: 10px; padding: 10px 12px; margin: 0 0 12px; font-size: 14px; }
 .fin-years, .fin-months { margin-bottom: 8px; }
 .fin-kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 12px 0 6px; }
-@media (min-width: 640px) { .fin-kpis { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 640px) { .fin-kpis { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 900px) { .fin-kpis { grid-template-columns: repeat(5, 1fr); } }
+.fin-kpis > div:last-child { grid-column: span 2; }
+@media (min-width: 640px) { .fin-kpis > div:last-child { grid-column: auto; } }
 .fin-kpis > div { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 14px; display: flex; flex-direction: column; }
 .fin-kpis span { color: var(--ink-2); font-size: 13px; }
 .fin-kpis b { font-size: 21px; font-variant-numeric: tabular-nums; }
@@ -590,3 +593,17 @@ img.missing { opacity: .35; }
 .share-item .row-btns { margin: 0; flex: none; }
 .share-two label { min-width: 0; }
 .share-form input[type="date"] { max-width: 100%; -webkit-appearance: none; appearance: none; }
+/* Leseansicht mit Toggles (wie in Notion) */
+.ed-read { font-size: 16.5px; line-height: 1.6; padding: 6px 2px; min-height: 180px; white-space: pre-wrap; word-break: break-word; tab-size: 4; }
+.ed-read-bar { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 8px; }
+.ed-read .ln { min-height: 1.6em; cursor: text; }
+.ed-read .ln.blank { min-height: .8em; }
+.ed-read summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 4px; border-radius: 6px; }
+.ed-read summary::-webkit-details-marker { display: none; }
+.ed-read summary::before { content: '▸'; color: var(--ink-3); flex: none; width: 1em; transition: transform .15s; display: inline-block; }
+.ed-read details[open] > summary::before { transform: rotate(90deg); }
+.ed-read summary:hover { background: var(--surface-2); }
+.ed-read .tg-h1 > summary, .ed-read .tg-h2 > summary { font-size: 1.08em; margin-top: 6px; }
+.ed-read .rt-h { font-weight: 700; }
+.ed-read .rt-h { text-transform: none; letter-spacing: 0; color: var(--ink); font-size: 1.05em; }
+.ed-read hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }

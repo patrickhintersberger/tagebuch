@@ -1217,6 +1217,7 @@
       <header class="sheet-head">
         <button class="icon-btn" data-act="ed-close" aria-label="Zurück">${ms('arrow_back')}</button>
         <b id="ed-head"></b>
+        <button class="icon-btn" data-act="ed-mode" id="ed-mode" aria-label="Lesen" title="Lesen / Bearbeiten">${ms('chrome_reader_mode')}</button>
         <button class="icon-btn" data-act="ed-strike" data-keepfocus aria-label="Durchstreichen" title="Durchstreichen (⌘ Umschalt X)">${ms('format_strikethrough')}</button>
         <button class="icon-btn" data-act="ed-templates" aria-label="Vorlage einfügen" title="Vorlage einfügen">${ms('description')}</button>
         <button class="icon-btn" data-act="ed-delete" aria-label="Eintrag löschen" title="Löschen">${ms('delete')}</button>
@@ -1227,6 +1228,7 @@
         <div class="ed-when"><input type="date" id="ed-date" value="${esc(e.date)}" aria-label="Datum"><input type="time" id="ed-time" value="${esc(e.time || '')}" aria-label="Uhrzeit"></div>
         <input id="ed-title" class="ed-title" type="text" placeholder="Titel" value="${esc(e.title)}" autocomplete="off">
         <textarea id="ed-text" class="ed-text" placeholder="Was ist heute passiert?">${esc(e.text)}</textarea>
+        <div id="ed-read" class="ed-read" hidden></div>
 
         <section class="field"><label>${ms('star')} Bewertung des Tages</label><div class="rate" id="ed-rate"></div></section>
         <section class="field"><label>${ms('sell')} Tags</label><div id="ed-tags"></div></section>
@@ -1281,7 +1283,73 @@
         cur.entry.loc.name = n; edLoc(); scheduleCommit();
       });
     }
+    // Leseansicht: Tippen auf eine Zeile öffnet das Bearbeiten genau dort, Doppeltippen auf eine Toggle-Zeile ebenso
+    $('#ed-read').addEventListener('click', ev => {
+      if (ev.target.closest('button, a, summary')) return;
+      const ln = ev.target.closest('[data-ln]');
+      setMode('edit', ln ? +ln.dataset.ln : null);
+    });
+    $('#ed-read').addEventListener('dblclick', ev => { const sm = ev.target.closest('summary'); if (sm) { ev.preventDefault(); setMode('edit', +sm.parentElement.dataset.ln); } });
+    // Bestehende Einträge mit Gliederung (eingerückte Zeilen, Überschriften) öffnen in der Leseansicht mit Toggles
+    if (!ed.isNew && hasOutline(e.text)) setMode('read');
     if (ed.isNew && !('ontouchstart' in window)) $('#ed-text').focus();
+  }
+
+  // ---------- Leseansicht mit Toggles (wie in Notion) ----------
+  // Jede Zeile mit eingerückten Unterzeilen und jede Überschrift (#, ##, ###) mit ihrem Abschnitt lässt sich auf- und zuklappen.
+  // Reviews starten zugeklappt, andere Einträge aufgeklappt; der Zustand wird pro Eintrag auf dem Gerät gemerkt.
+  function outlineTree(text) {
+    const lines = String(text || '').split('\n');
+    const root = { w: -1, h: 0, children: [] }, stack = [root];
+    const width = l => [...l.match(/^[\t ]*/)[0]].reduce((n, c) => n + (c === '\t' ? 4 : 1), 0);
+    const canParent = (p, c) => p === root || c.w > p.w || (c.w === p.w && p.h && (!c.h || c.h > p.h));
+    lines.forEach((l, i) => {
+      if (!l.trim()) { stack[stack.length - 1].children.push({ i, blank: true, children: [] }); return; }
+      const m = l.trim().match(/^(#{1,3})\s/);
+      const node = { i, w: width(l), h: m ? m[1].length : 0, line: l, children: [] };
+      while (!canParent(stack[stack.length - 1], node)) stack.pop();
+      stack[stack.length - 1].children.push(node);
+      stack.push(node);
+    });
+    return root;
+  }
+  const hasKids = n => n.children.some(c => !c.blank);
+  function hasOutline(text) { return outlineTree(text).children.some(hasKids); }
+  const isReviewEntry = e => (e.tags || []).some(t => /review/i.test(t)) || /review/i.test(e.title || '');
+  function foldState(id) { try { return JSON.parse(localStorage.getItem('tb-fold') || '{}')[id] || {}; } catch { return {}; } }
+  function saveFold(id, st) {
+    try { const all = JSON.parse(localStorage.getItem('tb-fold') || '{}'); all[id] = st; const keys = Object.keys(all); if (keys.length > 200) delete all[keys[0]]; localStorage.setItem('tb-fold', JSON.stringify(all)); } catch {}
+  }
+  function edRead() {
+    const box = $('#ed-read'); if (!box || !ed) return;
+    const e = ed.entry, st = foldState(e.id), closed = isReviewEntry(e);
+    const pad = n => `padding-left:${(n.w / 4) * 1.4}em`;
+    const html = n => {
+      if (n.blank) return '<div class="ln blank"></div>';
+      if (/^\s*(---|___|\*\*\*)\s*$/.test(n.line)) return `<hr class="ln" data-ln="${n.i}">`;
+      if (!hasKids(n)) return `<div class="ln" data-ln="${n.i}" style="${pad(n)}">${richText(n.line.trim())}</div>`;
+      const body = richText(n.line.trim().replace(/^[-*•]\s+/, '')); // Toggle-Zeilen ohne Aufzählungspunkt, wie in Notion
+      const open = n.i in st ? st[n.i] : !closed;
+      return `<details class="tg${n.h ? ' tg-h' + n.h : ''}" data-ln="${n.i}" ${open ? 'open' : ''}><summary style="${pad(n)}"><span class="tg-t">${body}</span></summary>${n.children.map(html).join('')}</details>`;
+    };
+    box.innerHTML = `<div class="ed-read-bar"><button class="btn ghost small" data-act="fold-all" data-open="1">${ms('unfold_more')} Alle aufklappen</button><button class="btn ghost small" data-act="fold-all" data-open="0">${ms('unfold_less')} Alle zuklappen</button></div>`
+      + (outlineTree(e.text).children.map(html).join('') || '<p class="hint">Noch kein Text. Tippe hier, um zu schreiben.</p>');
+    box.querySelectorAll('details').forEach(d => d.addEventListener('toggle', () => { const s2 = foldState(e.id); s2[d.dataset.ln] = d.open; saveFold(e.id, s2); }));
+  }
+  function setMode(mode, line) {
+    if (!ed) return;
+    const ta = $('#ed-text'), box = $('#ed-read'), btn = $('#ed-mode');
+    if (mode === 'read') { readInputs(); ed.mode = 'read'; edRead(); ta.hidden = true; box.hidden = false; }
+    else {
+      ed.mode = 'edit'; box.hidden = true; ta.hidden = false; grow();
+      if (line != null) {
+        const pos = ta.value.split('\n').slice(0, line).reduce((n, l) => n + l.length + 1, 0);
+        ta.focus({ preventScroll: true }); ta.setSelectionRange(pos, pos);
+        const body = $('.sheet-body'), lh = parseFloat(getComputedStyle(ta).lineHeight) || 26;
+        body.scrollTop = Math.max(0, ta.offsetTop + line * lh - body.clientHeight / 3);
+      }
+    }
+    if (btn) { btn.innerHTML = ms(ed.mode === 'read' ? 'edit' : 'chrome_reader_mode'); btn.setAttribute('aria-label', ed.mode === 'read' ? 'Bearbeiten' : 'Lesen'); }
   }
   // Text-Ersetzungen und Höhenanpassung verschieben sonst die Scrollposition des Eintrags
   function keepScroll(fn) { const b = $('.sheet-body'), y = b ? b.scrollTop : 0; fn(); if (b) b.scrollTop = y; }
@@ -1832,7 +1900,9 @@
     'ed-loc-clear': () => { ed.entry.loc = null; delete ed.entry.weather; delete ed.entry.wx; edLoc(); scheduleCommit(); },
     'ed-loc-pick': el => setLoc(el.dataset.lat, el.dataset.lng, el.dataset.name),
     'ed-photo-add': () => $('#ed-file').click(),
-    'ed-strike': () => strikeText(),
+    'ed-strike': () => { if (ed && ed.mode === 'read') setMode('edit'); strikeText(); },
+    'ed-mode': () => setMode(ed && ed.mode === 'read' ? 'edit' : 'read'),
+    'fold-all': el => { if (!ed) return; const open = el.dataset.open === '1', st = {}; $$('#ed-read details').forEach(d => { d.open = open; st[d.dataset.ln] = open; }); saveFold(ed.entry.id, st); },
     'ed-photo-cover': el => { const ph = ed.entry.photos; const i = ph.findIndex(p => p.id === el.dataset.id); if (i > 0) { ph.unshift(ph.splice(i, 1)[0]); edPhotos(); scheduleCommit(); toast('Titelbild geändert'); } },
     'ed-photo-del': el => { ed.entry.photos = ed.entry.photos.filter(p => p.id !== el.dataset.id); edPhotos(); scheduleCommit(); },
     'ed-templates': () => {
@@ -1842,7 +1912,7 @@
       m.innerHTML = list.length ? list.map(t => `<button data-act="ed-tpl" data-id="${esc(t.id)}">${ms('description')}${esc(t.name)}</button>`).join('') + `<button data-act="ed-bucket">${ms('flag')}Bucket-Vorschläge einfügen</button><button data-act="week-review">${ms('task_alt')}Wochen-Review automatisch erstellen</button>` : '<p class="hint">Keine Vorlagen vorhanden. Lege sie in den Einstellungen an.</p>';
       m.hidden = false;
     },
-    'ed-tpl': el => { $('#ed-tplmenu').hidden = true; const t = S.template(el.dataset.id); if (t) insertTemplate(t); },
+    'ed-tpl': el => { $('#ed-tplmenu').hidden = true; if (ed && ed.mode === 'read') setMode('edit'); const t = S.template(el.dataset.id); if (t) insertTemplate(t); },
     'tpl-edit': el => { editTpl = el.dataset.id; ui.built = null; render(); },
     'tpl-cancel': () => { editTpl = null; ui.built = null; render(); },
     'tpl-delete': el => { if (!confirm('Diese Vorlage löschen?')) return; editTpl = null; S.deleteTemplate(el.dataset.id); ui.built = null; render(); },
