@@ -1219,6 +1219,7 @@
         <button class="icon-btn" data-act="ed-close" aria-label="Zurück">${ms('arrow_back')}</button>
         <b id="ed-head"></b>
         <button class="icon-btn" data-act="ed-mode" id="ed-mode" aria-label="Lesen" title="Lesen / Bearbeiten">${ms('chrome_reader_mode')}</button>
+        <button class="icon-btn" data-act="ed-check" data-keepfocus aria-label="Checkliste" title="Checkliste (⌘ Umschalt C), abhaken mit ⌘ Enter">${ms('checklist')}</button>
         <button class="icon-btn" data-act="ed-strike" data-keepfocus aria-label="Durchstreichen" title="Durchstreichen (⌘ Umschalt X)">${ms('format_strikethrough')}</button>
         <button class="icon-btn" data-act="ed-templates" aria-label="Vorlage einfügen" title="Vorlage einfügen">${ms('description')}</button>
         <button class="icon-btn" data-act="ed-delete" aria-label="Eintrag löschen" title="Löschen">${ms('delete')}</button>
@@ -1246,6 +1247,9 @@
     ['focus', 'click', 'keyup'].forEach(t => $('#ed-text').addEventListener(t, () => { if (ed) ed.caretSet = true; }));
     $('#ed-text').addEventListener('keydown', ev => {
       if ((ev.metaKey || ev.ctrlKey) && ev.shiftKey && (ev.key === 'x' || ev.key === 'X')) { ev.preventDefault(); strikeText(); }
+      if ((ev.metaKey || ev.ctrlKey) && ev.shiftKey && (ev.key === 'c' || ev.key === 'C')) { ev.preventDefault(); checklistText(); }
+      if ((ev.metaKey || ev.ctrlKey) && !ev.shiftKey && ev.key === 'Enter') { ev.preventDefault(); checkCurrentLine(); }
+      if (ev.key === 'Enter' && !ev.shiftKey && !ev.metaKey && !ev.ctrlKey && !ev.altKey && !ev.isComposing && continueChecklist()) ev.preventDefault();
     });
     $('#ed-text').addEventListener('keydown', ev => {
       if (ev.key !== 'Tab' || ev.altKey || ev.ctrlKey || ev.metaKey) return;
@@ -1291,8 +1295,8 @@
       setMode('edit', ln ? +ln.dataset.ln : null);
     });
     $('#ed-read').addEventListener('dblclick', ev => { const sm = ev.target.closest('summary'); if (sm) { ev.preventDefault(); setMode('edit', +sm.parentElement.dataset.ln); } });
-    // Bestehende Einträge mit Gliederung (eingerückte Zeilen, Überschriften) öffnen in der Leseansicht mit Toggles
-    if (!ed.isNew && hasOutline(e.text)) setMode('read');
+    // Bestehende Einträge mit Gliederung (eingerückte Zeilen, Überschriften) oder Checkliste öffnen in der Leseansicht
+    if (!ed.isNew && (hasOutline(e.text) || hasChecklist(e.text))) setMode('read');
     if (ed.isNew && !('ontouchstart' in window)) $('#ed-text').focus();
   }
 
@@ -1328,8 +1332,10 @@
     const html = n => {
       if (n.blank) return '<div class="ln blank"></div>';
       if (/^\s*(---|___|\*\*\*)\s*$/.test(n.line)) return `<hr class="ln" data-ln="${n.i}">`;
-      if (!hasKids(n)) return `<div class="ln" data-ln="${n.i}" style="${pad(n)}">${richText(n.line.trim())}</div>`;
-      const body = richText(n.line.trim().replace(/^[-*•]\s+/, '')); // Toggle-Zeilen ohne Aufzählungspunkt, wie in Notion
+      const ck = n.line.match(CK);
+      const ckHtml = () => `<span class="ck${/[xX]/.test(ck[2]) ? ' done' : ''}"><button type="button" class="ck-box" data-act="ck" data-ln="${n.i}" aria-pressed="${/[xX]/.test(ck[2])}" aria-label="Erledigt">${ms('check')}</button><span class="ck-t">${richText(n.line.slice(ck[0].length))}</span></span>`;
+      if (!hasKids(n)) return ck ? `<div class="ln ck-ln" data-ln="${n.i}" style="${pad(n)}">${ckHtml()}</div>` : `<div class="ln" data-ln="${n.i}" style="${pad(n)}">${richText(n.line.trim())}</div>`;
+      const body = ck ? ckHtml() : richText(n.line.trim().replace(/^[-*•]\s+/, '')); // Toggle-Zeilen ohne Aufzählungspunkt, wie in Notion
       const open = n.i in st ? st[n.i] : !closed;
       return `<details class="tg${n.h ? ' tg-h' + n.h : ''}" data-ln="${n.i}" ${open ? 'open' : ''}><summary style="${pad(n)}"><span class="tg-t">${body}</span></summary>${n.children.map(html).join('')}</details>`;
     };
@@ -1615,6 +1621,82 @@
     });
     grow(); scheduleCommit();
   }
+
+  // ---------- Checkliste (wie in Notion) ----------
+  // Zeilen "- [ ] Aufgabe" sind offen, "- [x] Aufgabe" erledigt. In der Leseansicht abhaken per Tippen,
+  // im Textfeld mit ⌘ Enter. Erledigte Aufgaben erscheinen in der Leseansicht durchgestrichen.
+  const CK = /^(\s*)- \[([ xX])\] ?/;
+  function lineBounds(v, a, b = a) {
+    const ls = v.lastIndexOf('\n', a - 1) + 1;
+    const end = b > a && v[b - 1] === '\n' ? b - 1 : b;
+    const le = v.indexOf('\n', end) < 0 ? v.length : v.indexOf('\n', end);
+    return [ls, le];
+  }
+  // Textfeld ändern, sodass ⌘Z es rückgängig machen kann
+  function replaceRange(ta, a, b, text) {
+    ta.focus({ preventScroll: true }); ta.setSelectionRange(a, b);
+    const ok = document.execCommand && (text ? document.execCommand('insertText', false, text) : a === b || document.execCommand('delete'));
+    if (!ok) ta.value = ta.value.slice(0, a) + text + ta.value.slice(b);
+    ta.setSelectionRange(a + text.length, a + text.length);
+  }
+  // Aktuelle bzw. markierte Zeilen zu Checklisten-Punkten machen (Aufzählungszeichen werden ersetzt), oder zurück zu normalem Text
+  function checklistText() {
+    const ta = $('#ed-text'); if (!ta) return;
+    const v = ta.value, a = ta.selectionStart, b = ta.selectionEnd;
+    const [ls, le] = lineBounds(v, a, b);
+    const lines = v.slice(ls, le).split('\n');
+    const all = lines.filter(l => l.trim()).every(l => CK.test(l));
+    const out = lines.map(l => {
+      if (all) return l.replace(CK, '$1');
+      if (!l.trim() && lines.length > 1) return l;
+      return CK.test(l) ? l : l.replace(/^(\s*)(?:[-•*]\s+|\d+\.\s+)?/, '$1- [ ] ');
+    }).join('\n');
+    keepScroll(() => {
+      replaceRange(ta, ls, le, out);
+      if (a === b) { const p = Math.min(ls + out.length, Math.max(ls, a + out.length - (le - ls))); ta.setSelectionRange(p, p); }
+      else ta.setSelectionRange(ls, ls + out.length);
+    });
+    grow(); scheduleCommit();
+  }
+  function toggledLine(l) { return l.replace(CK, (m, ind, x) => `${ind}- [${x === ' ' ? 'x' : ' '}] `); }
+  function checkCurrentLine() {
+    const ta = $('#ed-text'); if (!ta) return;
+    const v = ta.value, a = ta.selectionStart, b = ta.selectionEnd;
+    const [ls, le] = lineBounds(v, a);
+    const l = v.slice(ls, le);
+    if (!CK.test(l)) return checklistText();
+    const out = toggledLine(l);
+    keepScroll(() => { replaceRange(ta, ls, le, out); const d = out.length - l.length; ta.setSelectionRange(a + d, b + d); });
+    grow(); scheduleCommit();
+  }
+  // Enter in einem Checklisten-Punkt beginnt den nächsten; Enter in einem leeren Punkt beendet die Liste
+  function continueChecklist() {
+    const ta = $('#ed-text'); if (!ta || ta.selectionStart !== ta.selectionEnd) return false;
+    const v = ta.value, a = ta.selectionStart;
+    const [ls, le] = lineBounds(v, a);
+    const m = v.slice(ls, le).match(CK);
+    if (!m || a < ls + m[0].length) return false;
+    if (!v.slice(ls + m[0].length, le).trim()) { keepScroll(() => replaceRange(ta, ls, le, m[1])); }
+    else keepScroll(() => replaceRange(ta, a, a, '\n' + m[1] + '- [ ] '));
+    grow(); scheduleCommit();
+    return true;
+  }
+  // Abhaken in der Leseansicht: Zeile im Text umschalten und speichern
+  function checkLine(i) {
+    if (!ed) return;
+    const ta = $('#ed-text');
+    const lines = ta.value.split('\n');
+    if (!CK.test(lines[i] || '')) return;
+    lines[i] = toggledLine(lines[i]);
+    ta.value = lines.join('\n');
+    readInputs();
+    const row = $(`#ed-read [data-ln="${i}"]`);
+    const ck = row && (row.matches('.ck') ? row : $('.ck', row));
+    if (ck) { const done = /\[[xX]\]/.test(lines[i]); ck.classList.toggle('done', done); const btn = $('.ck-box', ck); if (btn) btn.setAttribute('aria-pressed', done); }
+    else edRead();
+    scheduleCommit();
+  }
+  const hasChecklist = text => /^\s*- \[[ xX]\] /m.test(text || '');
 
   // ---------- Import aus Diarium ----------
   // Wandelt das HTML eines Diarium-Eintrags in Text um: Absätze -> Zeilen, fette Absätze -> Überschriften,
@@ -1940,6 +2022,8 @@
     'ed-loc-pick': el => setLoc(el.dataset.lat, el.dataset.lng, el.dataset.name),
     'ed-photo-add': () => $('#ed-file').click(),
     'ed-strike': () => { if (ed && ed.mode === 'read') setMode('edit'); strikeText(); },
+    'ed-check': () => { if (ed && ed.mode === 'read') setMode('edit'); checklistText(); },
+    'ck': el => checkLine(+el.dataset.ln),
     'ed-mode': () => setMode(ed && ed.mode === 'read' ? 'edit' : 'read'),
     'fold-all': el => { if (!ed) return; const open = el.dataset.open === '1', st = {}; $$('#ed-read details').forEach(d => { d.open = open; st[d.dataset.ln] = open; }); saveFold(ed.entry.id, st); },
     'ed-photo-cover': el => { const ph = ed.entry.photos; const i = ph.findIndex(p => p.id === el.dataset.id); if (i > 0) { ph.unshift(ph.splice(i, 1)[0]); edPhotos(); scheduleCommit(); toast('Titelbild geändert'); } },
