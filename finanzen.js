@@ -292,14 +292,24 @@
   }
 
   // ---------- Vermögen ----------
-  // Konten: letzter Kontostand je Konto aus den Buchungen (Finanzguru-Spalte „Kontostand“).
+  // Konten: letzter Kontostand je Konto aus den Buchungen (Finanzguru-Spalte „Kontostand“). Je Konto lassen sich ein
+  // eigener Name und „nicht mitzählen“ festlegen: fmeta {type: 'acct', account, label, hidden}.
   // Sachwerte und Schulden ohne eigenes Konto (Haus, Wohnung, Autos, Depot, Kredite): von Hand gepflegt in fmeta
   // als {type: 'asset', name, date, amount}; es gilt je Name der letzte Wert bis zum Stichtag, negativ = Schuld.
+  // Reihenfolge der Zeilen: fmeta 'wealth-order' mit Schlüsseln 'k:<Konto>' und 'a:<Name>'.
   const LOAN_ACC = /kreditkonto|darlehen/i;
   const TAX_ACC = /tagesgeld|steuer/i;
   const assetEntries = () => S.fmeta.filter(m => m.type === 'asset' && m.name && m.date);
+  const acctMeta = () => { const m = {}; S.fmeta.filter(x => x.type === 'acct' && x.account).forEach(x => { m[x.account] = x; }); return m; };
+  const acctLabel = (acc, meta) => (meta[acc] && meta[acc].label) || acc;
+  const orderMeta = () => S.fmeta.find(x => x.id === 'wealth-order');
+  const sortByOrder = keys => { const o = (orderMeta() || {}).order || []; const at = k => { const i = o.indexOf(k); return i < 0 ? 1e9 : i; }; return [...keys].sort((a, b) => at(a) - at(b)); };
   const monthEnd = (y, m) => new Date(Date.UTC(y, m + 1, 0)).toISOString().slice(0, 10);
   const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  // Auf- und zugeklappte Gruppen der Vermögenstabelle merkt sich nur dieses Gerät
+  const loadFold = () => { try { return JSON.parse(localStorage.getItem('fin-wealth-open')) || {}; } catch { return {}; } };
+  const saveFold = v => { try { localStorage.setItem('fin-wealth-open', JSON.stringify(v)); } catch { /* egal */ } };
+  let groupKeys = { k: [], w: [] }; // zuletzt angezeigte Reihenfolge, fürs Verschieben
 
   function balanceIndex(tx) {
     const byAcc = {};
@@ -330,8 +340,9 @@
     }
     return latest;
   }
-  function worthAt(index, iso) {
+  function worthAt(index, iso, meta) {
     const acc = balancesAt(index, iso);
+    for (const name of Object.keys(acc)) if (meta[name] && meta[name].hidden) delete acc[name];
     const assets = assetsAt(iso);
     let liquid = 0, tax = 0, loans = 0, goods = 0, debts = 0;
     for (const [name, a] of Object.entries(acc)) {
@@ -353,34 +364,39 @@
 
   function wealthView(tx) {
     const index = balanceIndex(tx);
+    const meta = acctMeta();
     if (!Object.keys(index).length && !assetEntries().length) {
-      return `<h2 class="ct-h">Vermögen</h2><section class="set"><p class="hint">Für das Vermögen braucht es Kontostände: den Finanzguru-Export noch einmal über „Datei einlesen“ laden (die Spalte „Kontostand“ wird jetzt mit übernommen). Haus, Wohnung, Autos, Depot und Kredite ohne eigenes Konto trägst du unten von Hand ein.</p></section>${assetForm()}`;
+      return `<h2 class="ct-h">Vermögen</h2><section class="set"><p class="hint">Für das Vermögen braucht es Kontostände: den Finanzguru-Export noch einmal über „Datei einlesen“ laden (die Spalte „Kontostand“ wird jetzt mit übernommen). Haus, Wohnung, Autos, Depot und Kredite ohne eigenes Konto trägst du unten von Hand ein.</p></section>${assetForm(index, meta)}`;
     }
     const y = +ui.year;
     const today = todayISO();
     const stich = ui.month !== null ? monthEnd(y, ui.month) : (String(y) === today.slice(0, 4) ? today : monthEnd(y, 11));
     const stichShown = stich > today ? today : stich;
-    const w = worthAt(index, stichShown);
+    const w = worthAt(index, stichShown, meta);
     // Monatsenden des Jahres bis heute, wie die Numbers-Übersicht
     const months = MONTHS.map((_, i) => monthEnd(y, i)).map(d => (d > today ? (d.slice(0, 7) === today.slice(0, 7) ? today : null) : d));
-    const cols = months.map(d => (d ? worthAt(index, d) : null));
-    const prev = worthAt(index, monthEnd(y - 1, 11));
-    const accNames = [...new Set(cols.filter(Boolean).flatMap(c => Object.keys(c.acc)))]
-      .filter(n => cols.some(c => c && c.acc[n] && c.acc[n].bal))
-      .sort((a, b) => (LOAN_ACC.test(a) - LOAN_ACC.test(b)) || a.localeCompare(b));
+    const cols = months.map(d => (d ? worthAt(index, d, meta) : null));
+    const prev = worthAt(index, monthEnd(y - 1, 11), meta);
+    const accNames = [...new Set(cols.filter(Boolean).flatMap(c => Object.keys(c.acc)))].filter(n => cols.some(c => c && c.acc[n] && c.acc[n].bal));
     const assetNames = [...new Set(cols.filter(Boolean).flatMap(c => Object.keys(c.assets)))].filter(n => cols.some(c => c && c.assets[n] && c.assets[n].amount));
+    const kKeys = sortByOrder(accNames.filter(n => !LOAN_ACC.test(n)).sort((a, b) => acctLabel(a, meta).localeCompare(acctLabel(b, meta))).map(n => 'k:' + n));
+    const wKeys = sortByOrder([...assetNames.map(n => 'a:' + n), ...accNames.filter(n => LOAN_ACC.test(n)).map(n => 'k:' + n)]);
+    const fold = loadFold();
     const cell = (v, i) => `<td class="${ui.month === i ? 'sel' : ''}">${v ? eur0(v) : ''}</td>`;
     const row = (label, vals, cls, title) => `<tr class="${cls || ''}"><th${title ? ` title="${esc(title)}"` : ''}>${esc(label)}</th>${vals.map(cell).join('')}</tr>`;
     const stale = name => { const a = w.acc[name]; return a && a.date < stichShown.slice(0, 8) + '01' ? `Letzter Kontostand ${new Date(a.date).toLocaleDateString('de-DE')}` : ''; };
+    const valOf = (c, key) => { if (!c) return 0; const n = key.slice(2); return key[0] === 'k' ? (c.acc[n] ? c.acc[n].bal : 0) : (c.assets[n] ? c.assets[n].amount : 0); };
+    const keyRow = key => row(key[0] === 'k' ? acctLabel(key.slice(2), meta) : key.slice(2), cols.map(c => valOf(c, key)), '', key[0] === 'k' ? [key.slice(2) !== acctLabel(key.slice(2), meta) ? key.slice(2) : '', stale(key.slice(2))].filter(Boolean).join(' · ') : '');
+    const head = (g, label, n) => `<tr class="grp fin-fold${fold[g] ? ' open' : ''}" data-fin="fold" data-g="${g}"><th colspan="13">${ms('expand_more')}${label} <small>${n} ${fold[g] ? '' : '· zum Aufklappen tippen'}</small></th></tr>`;
     const totals = cols.map(c => (c ? c.total : 0));
     const diffs = cols.map((c, i) => (c ? c.total - (i === 0 ? prev.total : (cols[i - 1] || prev).total) : 0));
     const table = [
-      `<tr class="grp"><th colspan="13">Konten</th></tr>`,
-      ...accNames.filter(n => !LOAN_ACC.test(n)).map(n => row(n, cols.map(c => (c && c.acc[n] ? c.acc[n].bal : 0)), '', stale(n))),
+      head('k', 'Konten', kKeys.length),
+      ...(fold.k ? kKeys.map(keyRow) : []),
       row('Konten gesamt', cols.map(c => (c ? c.liquid : 0)), 'tot'),
-      assetNames.length ? `<tr class="grp"><th colspan="13">Sachwerte und Schulden</th></tr>` : '',
-      ...assetNames.map(n => row(n, cols.map(c => (c && c.assets[n] ? c.assets[n].amount : 0)))),
-      ...accNames.filter(n => LOAN_ACC.test(n)).map(n => row(n, cols.map(c => (c && c.acc[n] ? c.acc[n].bal : 0)), '', stale(n))),
+      wKeys.length ? head('w', 'Sachwerte und Schulden', wKeys.length) : '',
+      ...(fold.w ? wKeys.map(keyRow) : []),
+      wKeys.length ? row('Sachwerte und Schulden gesamt', cols.map(c => (c ? c.total - c.liquid : 0)), 'tot') : '',
       row('Netto-Vermögen', totals, 'tot'),
       `<tr class="tot"><th>Veränderung zum Vormonat</th>${diffs.map((v, i) => `<td class="${ui.month === i ? 'sel' : ''} ${v < 0 ? 'neg' : v > 0 ? 'pos' : ''}">${cols[i] && v ? (v > 0 ? '+' : '') + eur0(v) : ''}</td>`).join('')}</tr>`,
     ].join('');
@@ -393,27 +409,49 @@
         <div><span>Netto-Vermögen</span><b class="${w.total >= 0 ? 'ok' : 'bad'}">${eur0(w.total)}</b><small>${prev.total ? `seit Jahresbeginn ${w.total - prev.total >= 0 ? '+' : ''}${eur0(w.total - prev.total)}` : ''}</small></div>
       </section>
       <div class="ct-table fin-table"><table><thead><tr><th></th>${MONTHS.map((m, i) => `<th class="${ui.month === i ? 'sel' : ''}">${m}</th>`).join('')}</tr></thead><tbody>${table}</tbody></table></div>
-      ${assetForm()}`;
+      ${assetForm(index, meta)}`;
   }
 
-  function assetForm() {
+  function assetForm(index, meta) {
     const latest = assetsAt('9999-12-31');
-    const items = Object.values(latest).sort((a, b) => b.amount - a.amount);
-    return `<details class="set fin-assets"${ui.assetsOpen ? ' open' : ''}><summary data-fin="assets-toggle">Sachwerte und Schulden pflegen (${items.filter(a => a.amount).length})</summary>
-      <p class="hint">Was kein eigenes Konto in Finanzguru hat: Haus, Wohnung, Autos, Depot, Kredite und Finanzierungen. Schulden mit Minus eintragen. Ein neuer Wert gilt ab dem gewählten Datum, frühere Monate behalten den alten Wert. Wert 0 heißt verkauft oder abbezahlt.</p>
-      <div class="list">${items.map(a => `<div class="fin-asset" data-name="${esc(a.name)}">
-          <span><b>${esc(a.name)}</b><small>${eur0(a.amount)} seit ${new Date(a.date).toLocaleDateString('de-DE')}</small></span>
-          <input type="text" inputmode="decimal" placeholder="Neuer Wert" aria-label="Neuer Wert für ${esc(a.name)}">
-          <input type="date" value="${todayISO()}" aria-label="Gültig ab">
-          <button class="btn small" data-fin="asset-save">Speichern</button>
-          <button class="icon-btn" data-fin="asset-del" data-id="${esc(a.id)}" aria-label="Letzten Wert von ${esc(a.name)} löschen" title="Letzten Wert löschen">${ms('delete')}</button>
-        </div>`).join('')}
+    const now = balancesAt(index, '9999-12-31');
+    const allAcc = Object.keys(index);
+    // Pflege-Liste in derselben Reihenfolge wie die Tabelle; abgewählte Konten bleiben hier sichtbar
+    const kKeys = sortByOrder(allAcc.filter(n => !LOAN_ACC.test(n)).sort((a, b) => acctLabel(a, meta).localeCompare(acctLabel(b, meta))).map(n => 'k:' + n));
+    const wKeys = sortByOrder([...Object.keys(latest).map(n => 'a:' + n), ...allAcc.filter(n => LOAN_ACC.test(n)).map(n => 'k:' + n)]);
+    groupKeys = { k: kKeys, w: wKeys };
+    const moves = (g, key) => `<button class="icon-btn" data-fin="move" data-g="${g}" data-key="${esc(key)}" data-d="-1" aria-label="Nach oben">${ms('arrow_upward')}</button><button class="icon-btn" data-fin="move" data-g="${g}" data-key="${esc(key)}" data-d="1" aria-label="Nach unten">${ms('arrow_downward')}</button>`;
+    const accRow = (g, acc) => {
+      const m = meta[acc] || {}, b = now[acc];
+      return `<div class="fin-asset" data-acc="${esc(acc)}">
+        <div class="fin-name"><input type="text" data-k="label" value="${esc(acctLabel(acc, meta))}" aria-label="Name für ${esc(acc)}"><small>Aus Finanzguru${acc !== acctLabel(acc, meta) ? ` (${esc(acc)})` : ''} · ${b ? `${eur0(b.bal)} am ${new Date(b.date).toLocaleDateString('de-DE')}` : 'kein Kontostand'}, aktualisiert sich selbst</small></div>
+        <label class="fin-count"><input type="checkbox" data-k="count" ${m.hidden ? '' : 'checked'}> mitzählen</label>
+        <span class="fin-acts"><button class="btn small" data-fin="acct-save">Speichern</button>${moves(g, 'k:' + acc)}</span></div>`;
+    };
+    const assetRow = name => {
+      const a = latest[name];
+      return `<div class="fin-asset" data-name="${esc(name)}">
+        <div class="fin-name"><input type="text" data-k="name" value="${esc(name)}" aria-label="Name"><small>${eur0(a.amount)} seit ${new Date(a.date).toLocaleDateString('de-DE')}</small></div>
+        <input type="text" inputmode="decimal" data-k="amount" placeholder="Neuer Wert" aria-label="Neuer Wert für ${esc(name)}">
+        <input type="date" data-k="date" value="${todayISO()}" aria-label="Gültig ab">
+        <span class="fin-acts"><button class="btn small" data-fin="asset-save">Speichern</button>${moves('w', 'a:' + name)}
+        <button class="icon-btn" data-fin="asset-del" data-id="${esc(a.id)}" aria-label="Letzten Wert von ${esc(name)} löschen" title="Letzten Wert löschen">${ms('delete')}</button></span>
+      </div>`;
+    };
+    return `<details class="set fin-assets"${ui.assetsOpen ? ' open' : ''}><summary data-fin="assets-toggle">Vermögen pflegen: Namen, Werte, Reihenfolge</summary>
+      <h3 class="fin-sub">Sachwerte und Schulden</h3>
+      <p class="hint">Haus, Wohnung, Autos, Depot und Finanzierungen ohne eigenes Konto trägst du hier ein, Schulden mit Minus. Ein neuer Wert gilt ab dem gewählten Datum, frühere Monate behalten den alten Wert. Wert 0 heißt verkauft oder abbezahlt. Kredite mit eigenem Konto in Finanzguru (z. B. Kreditkonto) stehen automatisch dabei und aktualisieren sich selbst; trag sie nicht noch einmal von Hand ein.</p>
+      <div class="list">${wKeys.map(k => (k[0] === 'a' ? assetRow(k.slice(2)) : accRow('w', k.slice(2)))).join('')}
         <div class="fin-asset fin-asset-new">
           <input type="text" placeholder="Name, z. B. Haus" aria-label="Name" data-k="name">
           <input type="text" inputmode="decimal" placeholder="Wert, Schuld mit Minus" aria-label="Wert" data-k="amount">
           <input type="date" value="${todayISO()}" aria-label="Gültig ab" data-k="date">
           <button class="btn small" data-fin="asset-add">Hinzufügen</button>
-        </div></div></details>`;
+        </div></div>
+      <h3 class="fin-sub">Konten aus Finanzguru</h3>
+      <p class="hint">Eigener Name statt Kontonummer, Reihenfolge und ob das Konto ins Vermögen zählt.</p>
+      <div class="list">${kKeys.map(k => accRow('k', k.slice(2))).join('')}</div>
+    </details>`;
   }
 
   // ---------- Auswertung ----------
@@ -543,16 +581,44 @@
       S.saveFmeta({ ...(old || {}), type: 'rule', match, cat });
     } else if (a === 'rule-del') S.deleteFmeta(b.dataset.id);
     else if (a === 'assets-toggle') ui.assetsOpen = !b.closest('details').open;
+    else if (a === 'fold') { const f = loadFold(); f[b.dataset.g] = !f[b.dataset.g]; saveFold(f); rerender(); }
     else if (a === 'asset-save' || a === 'asset-add') {
       const row = b.closest('.fin-asset');
-      const [first, second, third] = row.querySelectorAll('input');
-      const name = a === 'asset-add' ? first.value.trim() : row.dataset.name;
-      const amount = parseEuro(a === 'asset-add' ? second.value : first.value);
-      const date = (a === 'asset-add' ? third : second).value || todayISO();
-      if (!name || amount === null) { ui.msg = 'Bitte Name und Wert eintragen, Schulden mit Minus.'; rerender(); return; }
+      const field = k => row.querySelector(`[data-k="${k}"]`);
+      const old = row.dataset.name || '';
+      const name = field('name').value.trim();
+      const amount = parseEuro(field('amount').value);
+      const date = field('date').value || todayISO();
       ui.assetsOpen = true;
-      ui.msg = `${name}: ${eur0(amount)} ab ${new Date(date).toLocaleDateString('de-DE')} gespeichert.`;
-      S.saveFmeta({ type: 'asset', name, date, amount });
+      if (!name || (a === 'asset-add' && amount === null)) { ui.msg = 'Bitte Name und Wert eintragen, Schulden mit Minus.'; rerender(); return; }
+      if (a === 'asset-save' && name !== old) {
+        // Umbenennen: alle Werte dieses Postens bekommen den neuen Namen, die Position in der Reihenfolge bleibt
+        if (assetEntries().some(e => e.name === name)) { ui.msg = `„${name}“ gibt es schon.`; rerender(); return; }
+        const om = orderMeta();
+        if (om && om.order) S.saveFmeta({ ...om, order: om.order.map(k => (k === 'a:' + old ? 'a:' + name : k)) });
+        assetEntries().filter(e => e.name === old).forEach(e => S.saveFmeta({ ...e, name }));
+        ui.msg = `„${old}“ heißt jetzt „${name}“.`;
+      }
+      if (amount !== null) {
+        ui.msg = `${ui.msg && name !== old ? ui.msg + ' ' : ''}${name}: ${eur0(amount)} ab ${new Date(date).toLocaleDateString('de-DE')} gespeichert.`;
+        S.saveFmeta({ type: 'asset', name, date, amount });
+      } else if (name === old) { ui.msg = 'Bitte einen neuen Wert oder Namen eintragen.'; rerender(); }
+    } else if (a === 'acct-save') {
+      const row = b.closest('.fin-asset');
+      const acc = row.dataset.acc, m = acctMeta()[acc] || {};
+      const label = row.querySelector('[data-k="label"]').value.trim();
+      ui.assetsOpen = true;
+      ui.msg = `Konto gespeichert: ${label || acc}.`;
+      S.saveFmeta({ ...m, type: 'acct', account: acc, label: label && label !== acc ? label : '', hidden: !row.querySelector('[data-k="count"]').checked });
+    } else if (a === 'move') {
+      const list = [...groupKeys[b.dataset.g]];
+      const i = list.indexOf(b.dataset.key), j = i + +b.dataset.d;
+      if (i < 0 || j < 0 || j >= list.length) return;
+      [list[i], list[j]] = [list[j], list[i]];
+      const next = b.dataset.g === 'k' ? [...list, ...groupKeys.w] : [...groupKeys.k, ...list];
+      const om = orderMeta() || { id: 'wealth-order', type: 'setting' };
+      ui.assetsOpen = true;
+      S.saveFmeta({ ...om, order: [...next, ...(om.order || []).filter(k => !next.includes(k))] });
     } else if (a === 'asset-del') { ui.assetsOpen = true; S.deleteFmeta(b.dataset.id); }
   });
   document.addEventListener('change', async ev => {
