@@ -812,10 +812,13 @@
   const bkSub = b => [bkCost(b), b.cat, b.loc && b.loc.name, b.ageTo ? `bis ${b.ageTo} Jahre` : '', (b.months || []).length ? (b.months || []).map(m => MONTHS[m]).join(', ') : '', b.plan ? 'geplant ' + parse(b.plan + '-01').toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }) : ''].filter(Boolean).join(' · ');
 
   // Vorschläge mit Begründung, wichtigste zuerst
-  function bucketSuggestions(max = 5) {
-    const open = S.bucket.filter(b => !b.done);
-    const age = bkAge(), here = lastPlace(), now = new Date();
+  // skipPlanned: Geplantes weglassen, weil es in der Bucket-Liste schon oben unter „Als Nächstes“ steht
+  function bucketSuggestions(max = 5, skipPlanned = false) {
+    const now = new Date();
     const m = now.getMonth(), ym = `${now.getFullYear()}-${pad(m + 1)}`;
+    // Für einen späteren Monat Geplantes ist schon entschieden und kommt nicht mehr als Vorschlag
+    const open = S.bucket.filter(b => !b.done && !(b.plan && (skipPlanned || b.plan > ym)));
+    const age = bkAge(), here = lastPlace();
     const out = [], seen = new Set();
     const add = (b, reason) => { if (!seen.has(b.id) && out.length < max) { seen.add(b.id); out.push({ b, reason }); } };
     open.filter(b => b.plan && b.plan <= ym).forEach(b => add(b, b.plan === ym ? 'Für diesen Monat geplant' : 'War schon geplant und ist noch offen'));
@@ -887,7 +890,7 @@
     const groups = new Map();
     // Geplante stehen bei „Offen“ oben unter „Als Nächstes“, nicht noch einmal in den Lebensphasen
     list.filter(b => ui.bkFilter !== 'open' || !b.plan).sort((x, y) => (x.ageTo || 999) - (y.ageTo || 999) || (x.createdAt || 0) - (y.createdAt || 0)).forEach(b => { const k = phase(b); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(b); });
-    const sug = ui.bkFilter === 'open' ? bucketSuggestions(4) : [];
+    const sug = ui.bkFilter === 'open' ? bucketSuggestions(4, true) : [];
     // Summe der offenen einmaligen Erlebnisse; Tagesbudgets und Anschaffungen laufen getrennt
     const buy = b => b.cat === 'Sonstiges' || b.cat === 'Beruf';
     const sumOnce = open.filter(b => b.cost && b.costPer !== 'day' && !buy(b)).reduce((n, b) => n + b.cost, 0);
