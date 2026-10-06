@@ -829,6 +829,49 @@
     [...open].sort((x, y) => (x.createdAt || 0) - (y.createdAt || 0)).forEach(b => add(b, 'Steht schon länger auf deiner Liste'));
     return out;
   }
+  // Als Nächstes: alles mit „Geplant für“, nach Monat sortiert. Dazu Hinweise, was sich kombinieren lässt:
+  // geplante Ziele nah beieinander in verschiedenen Monaten und offene Ziele in der Nähe eines geplanten.
+  const BK_NEAR_KM = 350;
+  const bkMonthName = ym => parse(ym + '-01').toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+  const bkMonthShort = ym => parse(ym + '-01').toLocaleDateString('de-DE', { month: 'short' }).replace('.', '');
+  function bkUntil(ym) {
+    const now = new Date(), d = (+ym.slice(0, 4) - now.getFullYear()) * 12 + (+ym.slice(5, 7) - 1 - now.getMonth());
+    return d < 0 ? 'schon vorbei, noch offen' : d === 0 ? 'diesen Monat' : d === 1 ? 'nächsten Monat' : `in ${d} Monaten`;
+  }
+  const hasPos = b => b.loc && b.loc.lat != null;
+  function bkTips(planned, open) {
+    const tips = [];
+    planned.forEach((a, i) => planned.slice(i + 1).forEach(b => {
+      if (!hasPos(a) || !hasPos(b) || a.plan === b.plan) return;
+      const km = Math.round(kmBetween(a.loc, b.loc));
+      if (km > BK_NEAR_KM) return;
+      const save = Math.min(a.travel || 0, b.travel || 0);
+      tips.push({ text: `${a.title} (${bkMonthShort(a.plan)}) und ${b.title} (${bkMonthShort(b.plan)}) liegen nur rund ${km} km auseinander. In einer Reise kombiniert sparst du eine Anreise${save ? ` von ca. ${eur(save)}` : ''}.` });
+    }));
+    planned.forEach(p => {
+      const m = +p.plan.slice(5, 7) - 1;
+      if ((p.months || []).length && !p.months.includes(m)) tips.push({ text: `${p.title} passt laut deinen Monaten eher in ${p.months.map(x => MONTHS[x]).join(', ')}, geplant ist ${bkMonthShort(p.plan)}.` });
+    });
+    // Jedes offene Ziel nur beim nächstgelegenen geplanten Ziel vorschlagen
+    const withPos = planned.filter(hasPos);
+    open.filter(b => !b.plan && hasPos(b) && !b.loc.wide).map(b => {
+      const [p, km] = withPos.map(p => [p, Math.round(kmBetween(p.loc, b.loc))]).sort((x, y) => x[1] - y[1])[0] || [];
+      return { b, p, km };
+    }).filter(x => x.p && x.km <= BK_NEAR_KM).sort((x, y) => x.km - y.km)
+      .forEach(({ b, p, km }) => tips.push({ id: b.id, plan: p.plan, text: `${b.title} liegt rund ${km} km von ${p.title} entfernt, gleich mitnehmen${bkCost(b) ? ` (vor Ort ${bkCost(b)})` : ''}.` }));
+    return tips;
+  }
+  function bkNext(open) {
+    const planned = open.filter(b => b.plan).sort((x, y) => x.plan.localeCompare(y.plan) || (x.createdAt || 0) - (y.createdAt || 0));
+    if (!planned.length) return '';
+    const byMonth = new Map();
+    planned.forEach(b => { if (!byMonth.has(b.plan)) byMonth.set(b.plan, []); byMonth.get(b.plan).push(b); });
+    const tips = bkTips(planned, open);
+    return `<h2 class="ct-h">Als Nächstes</h2>
+      ${[...byMonth.entries()].map(([ym, items]) => `<p class="bk-mon">${ms('calendar_month')}<b>${esc(bkMonthName(ym))}</b><span class="bk-until">${bkUntil(ym)}</span></p><div class="list">${items.map(bkRow).join('')}</div>`).join('')}
+      ${tips.length ? `<section class="memory bk-tips"><header>${ms('star')}<div><b>Passt dazu</b><span>Was sich mit deinen Plänen verbinden lässt</span></div></header>
+        ${tips.map(t => `<div class="bk sug"><div><small>${esc(t.text)}</small></div>${t.id ? `<button class="btn small ghost" data-act="bk-plan-at" data-id="${esc(t.id)}" data-plan="${esc(t.plan)}">Mit einplanen</button>` : ''}</div>`).join('')}</section>` : ''}`;
+  }
   function bkRow(b) {
     return `<div class="bk ${b.done ? 'done' : ''}" data-act="bk-open" data-id="${esc(b.id)}" tabindex="0">
       <button class="hb-check" data-act="bk-toggle" data-id="${esc(b.id)}" aria-pressed="${!!b.done}" aria-label="Erledigt">${ms('check')}</button>
@@ -842,7 +885,8 @@
     // Lebensphasen in 5-Jahres-Abschnitten, wie die „Zeit-Eimer“ aus Die with Zero
     const phase = b => b.done && ui.bkFilter !== 'open' ? 'Erledigt' : !b.ageTo ? 'Ohne Zeitfenster' : age != null && b.ageTo < age ? 'Zeitfenster überschritten' : `Bis ${Math.ceil(b.ageTo / 5) * 5} Jahre`;
     const groups = new Map();
-    list.sort((x, y) => (x.ageTo || 999) - (y.ageTo || 999) || (x.createdAt || 0) - (y.createdAt || 0)).forEach(b => { const k = phase(b); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(b); });
+    // Geplante stehen bei „Offen“ oben unter „Als Nächstes“, nicht noch einmal in den Lebensphasen
+    list.filter(b => ui.bkFilter !== 'open' || !b.plan).sort((x, y) => (x.ageTo || 999) - (y.ageTo || 999) || (x.createdAt || 0) - (y.createdAt || 0)).forEach(b => { const k = phase(b); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(b); });
     const sug = ui.bkFilter === 'open' ? bucketSuggestions(4) : [];
     // Summe der offenen einmaligen Erlebnisse; Tagesbudgets und Anschaffungen laufen getrennt
     const buy = b => b.cat === 'Sonstiges' || b.cat === 'Beruf';
@@ -856,6 +900,7 @@
         <div class="row-btns"><button class="btn" data-act="bk-new">${ms('add')} Ziel</button></div></header>
       ${bkProfile().birth ? '' : `<section class="set"><h3>Geburtsdatum</h3><p class="hint">Damit die Liste nach Lebensphasen sortiert und warnt, wenn sich ein Zeitfenster schließt.</p>
         <form id="bk-birth" class="hb-stepper"><input type="date" name="birth" required style="width:auto"><button class="btn">Speichern</button></form></section>`}
+      ${ui.bkFilter === 'open' ? bkNext(open) : ''}
       ${sug.length ? `<section class="memory"><header>${ms('star')}<div><b>Vorschläge für jetzt</b><span>Für deine Wochen- und Monatsplanung</span></div></header>
         ${sug.map(({ b, reason }) => `<div class="bk sug" data-act="bk-open" data-id="${esc(b.id)}" tabindex="0"><div><em>${esc(reason)}</em><b>${esc(b.title)}</b>${bkSub(b) ? `<small>${esc(bkSub(b))}</small>` : ''}</div>
           <button class="btn small ghost" data-act="bk-plan" data-id="${esc(b.id)}">Diesen Monat</button></div>`).join('')}</section>` : ''}
@@ -1968,6 +2013,7 @@
     'bk-new': () => openBucket(null),
     'bk-open': el => openBucket(el.dataset.id),
     'bk-toggle': el => { const b = S.bucketItem(el.dataset.id); if (b) S.saveBucket({ ...b, done: b.done ? '' : todayISO() }); },
+    'bk-plan-at': el => { const b = S.bucketItem(el.dataset.id); if (!b) return; S.saveBucket({ ...b, plan: el.dataset.plan }); toast('Für ' + bkMonthName(el.dataset.plan) + ' eingeplant'); },
     'bk-plan': el => { const b = S.bucketItem(el.dataset.id); if (!b) return; S.saveBucket({ ...b, plan: todayISO().slice(0, 7) }); toast('Für diesen Monat eingeplant'); },
     'bk-filter': el => { ui.bkFilter = el.dataset.f; render(); },
     'bk-delete': el => { if (!confirm('Dieses Ziel löschen?')) return; S.deleteBucket(el.dataset.id); closeSettings(); },
