@@ -88,6 +88,15 @@
   const LOAN_ACCOUNT = /kreditkonto/i;
   const BIG_BUILD = -500000;
 
+  // Feste Zuordnungen, die vor der Finanzguru-Kategorie gelten (Finanzguru liegt hier falsch); eigene Regeln haben Vorrang.
+  const FIXED_RULES = [
+    [/\bopenbank\b/, 'Leasing'], // Leasing-Finanzierung des Geschäftswagens, Finanzguru: „Mobilität / Auto“
+  ];
+  // Umsatzsteuer: Einnahmen auf dem Geschäftskonto sind brutto. Mit Dauerfristverlängerung wird die Umsatzsteuer eines
+  // Monats erst am 10. des übernächsten Monats fällig, am Monatsende sind also der laufende und der Vormonat noch offen.
+  const UST_RATE = 0.19;
+  const UST_OPEN_MONTHS = 2;
+
   const userRules = () => S.fmeta.filter(m => m.type === 'rule' && m.match && m.cat);
   const norm = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
   const haystack = t => norm(`${t.payee || ''} ${t.text || ''}`);
@@ -99,10 +108,14 @@
     const r = userRules().find(r => h.includes(norm(r.match)));
     if (r) return { cat: r.cat, how: 'regel' };
     if (t.transfer) return { cat: 'Umbuchung (zählt nicht)', how: 'finanzguru' };
+    const fixed = FIXED_RULES.find(([re]) => re.test(h));
+    if (fixed) return { cat: fixed[1], how: 'auto' };
     const fg = norm(t.fgCat);
     if (fg) {
       let cat = FG_SUB[fg] || FG_MAIN[fg.split(' / ')[0]];
       if (cat === 'Gehalt vom Hauptjob' && !BUSINESS_ACCOUNT.test(t.account || '')) cat = 'Umbuchung (zählt nicht)';
+      // Abbuchung vom Geschäftskonto, die Finanzguru als Lohn/Gehalt führt (z. B. SAMI Systems), ist eine Geschäftsausgabe
+      if (cat === 'Gehalt vom Hauptjob' && t.amount < 0) cat = 'Sonstiges';
       if (t.amount < 0 && cat !== 'Umbuchung (zählt nicht)' && (LOAN_ACCOUNT.test(t.account || '') || (cat === 'Bauen und Renovieren' && t.amount <= BIG_BUILD))) cat = 'Immobilie (Kauf & Umbau)';
       // Gutschriften in einer Ausgaben-Kategorie (Erstattung, Rückgabe) zählen wie in der Jahresübersicht als Rückzahlung
       if (cat && t.amount > 0 && ['out', 'biz'].includes(catGroup(cat))) cat = 'Rückzahlungen';
@@ -180,6 +193,7 @@
   const COLS = {
     date: /^(buchungstag|buchungs?datum|datum|date|valuta|wertstellung)$/i,
     amount: /^(betrag|betrag \(eur\)|betrag in eur|amount|umsatz|brutto)$/i,
+    bal: /^(kontostand|saldo|balance)$/i,
     payee: /^(beguenstigter\/auftraggeber|begünstigter\/auftraggeber|empfänger|empfaenger|zahlungsempfänger|gegenpartei|name|beguenstigter\/zahlungspflichtiger|begünstigter\/zahlungspflichtiger|auftraggeber|händler)$/i,
     text: /^(verwendungszweck|beschreibung|buchungstext|description|zweck)$/i,
     account: /^(name referenzkonto|kontoname|konto|account|bankname)$/i,
@@ -216,6 +230,8 @@
         src: source,
       };
       if (/^ja$/i.test(String(val(r, 'transfer')).trim())) t.transfer = true;
+      const bal = String(val(r, 'bal')).trim() === '' ? null : toCents(val(r, 'bal'));
+      if (bal !== null) t.bal = bal;
       const note = String(val(r, 'note') || '').trim(), tags = String(val(r, 'tags') || '').trim();
       if (note) t.note = note;
       if (tags) t.tags = tags;
@@ -231,6 +247,10 @@
     }
     if (!list.length) throw new Error('Die Datei enthält keine lesbaren Buchungen.');
     const dates = list.map(t => t.date).sort();
+    // Schon vorhandene Buchungen bekommen beim erneuten Einlesen den Kontostand nachgetragen, sonst bleiben sie unverändert
+    const have = new Map(S.finance.map(f => [f.id, f]));
+    const withBal = list.filter(t => t.bal != null && have.has(t.id) && have.get(t.id).bal == null).map(t => ({ ...have.get(t.id), bal: t.bal }));
+    if (withBal.length) S.saveFinance(withBal, true);
     return { added: S.saveFinance(list, false), total: list.length, skipped, from: dates[0], to: dates[dates.length - 1] };
   }
   async function importFile(file) {
@@ -271,8 +291,133 @@
       <div class="fin-legend">${SERIES.map(([, label, cls]) => `<span><i class="${cls}"></i>${label}</span>`).join('')}</div></div>`;
   }
 
+  // ---------- Vermögen ----------
+  // Konten: letzter Kontostand je Konto aus den Buchungen (Finanzguru-Spalte „Kontostand“).
+  // Sachwerte und Schulden ohne eigenes Konto (Haus, Wohnung, Autos, Depot, Kredite): von Hand gepflegt in fmeta
+  // als {type: 'asset', name, date, amount}; es gilt je Name der letzte Wert bis zum Stichtag, negativ = Schuld.
+  const LOAN_ACC = /kreditkonto|darlehen/i;
+  const TAX_ACC = /tagesgeld|steuer/i;
+  const assetEntries = () => S.fmeta.filter(m => m.type === 'asset' && m.name && m.date);
+  const monthEnd = (y, m) => new Date(Date.UTC(y, m + 1, 0)).toISOString().slice(0, 10);
+  const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+
+  function balanceIndex(tx) {
+    const byAcc = {};
+    for (const t of tx) if (t.bal != null && t.account) (byAcc[t.account] = byAcc[t.account] || []).push(t);
+    for (const list of Object.values(byAcc)) list.sort((a, b) => a.date.localeCompare(b.date));
+    return byAcc;
+  }
+  /** Kontostände je Konto zum Stichtag. Bei mehreren Buchungen am letzten Tag zählt die, auf die keine andere aufbaut. */
+  function balancesAt(index, iso) {
+    const out = {};
+    for (const [acc, list] of Object.entries(index)) {
+      let hi = -1;
+      for (let i = 0; i < list.length && list[i].date <= iso; i++) hi = i;
+      if (hi < 0) continue;
+      const day = list.filter(t => t.date === list[hi].date);
+      const before = new Set(day.map(t => t.bal - t.amount));
+      const end = day.find(t => !before.has(t.bal)) || day[day.length - 1];
+      out[acc] = { bal: end.bal, date: end.date };
+    }
+    return out;
+  }
+  function assetsAt(iso) {
+    const latest = {};
+    for (const a of assetEntries()) {
+      if (a.date > iso) continue;
+      const o = latest[a.name];
+      if (!o || a.date > o.date || (a.date === o.date && (a.updatedAt || 0) > (o.updatedAt || 0))) latest[a.name] = a;
+    }
+    return latest;
+  }
+  function worthAt(index, iso) {
+    const acc = balancesAt(index, iso);
+    const assets = assetsAt(iso);
+    let liquid = 0, tax = 0, loans = 0, goods = 0, debts = 0;
+    for (const [name, a] of Object.entries(acc)) {
+      if (LOAN_ACC.test(name)) loans += a.bal;
+      else { liquid += a.bal; if (TAX_ACC.test(name)) tax += a.bal; }
+    }
+    for (const a of Object.values(assets)) { if (a.amount >= 0) goods += a.amount; else debts += a.amount; }
+    return { acc, assets, liquid, tax, goods, debts: debts + loans, total: liquid + goods + debts + loans };
+  }
+  // Beträge wie „650.000“, „-96.000,50“ oder „38000“
+  const parseEuro = v => {
+    let t = String(v || '').replace(/[€\s]|EUR/gi, '');
+    if (!t) return null;
+    if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+    else if (/^-?\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+    const n = Number(t);
+    return Number.isFinite(n) ? Math.round(n * 100) : null;
+  };
+
+  function wealthView(tx) {
+    const index = balanceIndex(tx);
+    if (!Object.keys(index).length && !assetEntries().length) {
+      return `<h2 class="ct-h">Vermögen</h2><section class="set"><p class="hint">Für das Vermögen braucht es Kontostände: den Finanzguru-Export noch einmal über „Datei einlesen“ laden (die Spalte „Kontostand“ wird jetzt mit übernommen). Haus, Wohnung, Autos, Depot und Kredite ohne eigenes Konto trägst du unten von Hand ein.</p></section>${assetForm()}`;
+    }
+    const y = +ui.year;
+    const today = todayISO();
+    const stich = ui.month !== null ? monthEnd(y, ui.month) : (String(y) === today.slice(0, 4) ? today : monthEnd(y, 11));
+    const stichShown = stich > today ? today : stich;
+    const w = worthAt(index, stichShown);
+    // Monatsenden des Jahres bis heute, wie die Numbers-Übersicht
+    const months = MONTHS.map((_, i) => monthEnd(y, i)).map(d => (d > today ? (d.slice(0, 7) === today.slice(0, 7) ? today : null) : d));
+    const cols = months.map(d => (d ? worthAt(index, d) : null));
+    const prev = worthAt(index, monthEnd(y - 1, 11));
+    const accNames = [...new Set(cols.filter(Boolean).flatMap(c => Object.keys(c.acc)))]
+      .filter(n => cols.some(c => c && c.acc[n] && c.acc[n].bal))
+      .sort((a, b) => (LOAN_ACC.test(a) - LOAN_ACC.test(b)) || a.localeCompare(b));
+    const assetNames = [...new Set(cols.filter(Boolean).flatMap(c => Object.keys(c.assets)))].filter(n => cols.some(c => c && c.assets[n] && c.assets[n].amount));
+    const cell = (v, i) => `<td class="${ui.month === i ? 'sel' : ''}">${v ? eur0(v) : ''}</td>`;
+    const row = (label, vals, cls, title) => `<tr class="${cls || ''}"><th${title ? ` title="${esc(title)}"` : ''}>${esc(label)}</th>${vals.map(cell).join('')}</tr>`;
+    const stale = name => { const a = w.acc[name]; return a && a.date < stichShown.slice(0, 8) + '01' ? `Letzter Kontostand ${new Date(a.date).toLocaleDateString('de-DE')}` : ''; };
+    const totals = cols.map(c => (c ? c.total : 0));
+    const diffs = cols.map((c, i) => (c ? c.total - (i === 0 ? prev.total : (cols[i - 1] || prev).total) : 0));
+    const table = [
+      `<tr class="grp"><th colspan="13">Konten</th></tr>`,
+      ...accNames.filter(n => !LOAN_ACC.test(n)).map(n => row(n, cols.map(c => (c && c.acc[n] ? c.acc[n].bal : 0)), '', stale(n))),
+      row('Konten gesamt', cols.map(c => (c ? c.liquid : 0)), 'tot'),
+      assetNames.length ? `<tr class="grp"><th colspan="13">Sachwerte und Schulden</th></tr>` : '',
+      ...assetNames.map(n => row(n, cols.map(c => (c && c.assets[n] ? c.assets[n].amount : 0)))),
+      ...accNames.filter(n => LOAN_ACC.test(n)).map(n => row(n, cols.map(c => (c && c.acc[n] ? c.acc[n].bal : 0)), '', stale(n))),
+      row('Netto-Vermögen', totals, 'tot'),
+      `<tr class="tot"><th>Veränderung zum Vormonat</th>${diffs.map((v, i) => `<td class="${ui.month === i ? 'sel' : ''} ${v < 0 ? 'neg' : v > 0 ? 'pos' : ''}">${cols[i] && v ? (v > 0 ? '+' : '') + eur0(v) : ''}</td>`).join('')}</tr>`,
+    ].join('');
+    return `<h2 class="ct-h">Vermögen · Stand ${new Date(stichShown).toLocaleDateString('de-DE')}</h2>
+      <section class="fin-kpis">
+        <div><span>Konten</span><b>${eur0(w.liquid)}</b><small>davon Steuerkonto ${eur0(w.tax)}</small></div>
+        <div><span>Frei verfügbar</span><b>${eur0(w.liquid - w.tax)}</b><small>Konten ohne Steuerkonto</small></div>
+        <div><span>Sachwerte</span><b>${eur0(w.goods)}</b><small>Immobilien, Autos, Depot</small></div>
+        <div><span>Schulden</span><b class="bad">${eur0(w.debts)}</b><small>Kredite und Finanzierungen</small></div>
+        <div><span>Netto-Vermögen</span><b class="${w.total >= 0 ? 'ok' : 'bad'}">${eur0(w.total)}</b><small>${prev.total ? `seit Jahresbeginn ${w.total - prev.total >= 0 ? '+' : ''}${eur0(w.total - prev.total)}` : ''}</small></div>
+      </section>
+      <div class="ct-table fin-table"><table><thead><tr><th></th>${MONTHS.map((m, i) => `<th class="${ui.month === i ? 'sel' : ''}">${m}</th>`).join('')}</tr></thead><tbody>${table}</tbody></table></div>
+      ${assetForm()}`;
+  }
+
+  function assetForm() {
+    const latest = assetsAt('9999-12-31');
+    const items = Object.values(latest).sort((a, b) => b.amount - a.amount);
+    return `<details class="set fin-assets"${ui.assetsOpen ? ' open' : ''}><summary data-fin="assets-toggle">Sachwerte und Schulden pflegen (${items.filter(a => a.amount).length})</summary>
+      <p class="hint">Was kein eigenes Konto in Finanzguru hat: Haus, Wohnung, Autos, Depot, Kredite und Finanzierungen. Schulden mit Minus eintragen. Ein neuer Wert gilt ab dem gewählten Datum, frühere Monate behalten den alten Wert. Wert 0 heißt verkauft oder abbezahlt.</p>
+      <div class="list">${items.map(a => `<div class="fin-asset" data-name="${esc(a.name)}">
+          <span><b>${esc(a.name)}</b><small>${eur0(a.amount)} seit ${new Date(a.date).toLocaleDateString('de-DE')}</small></span>
+          <input type="text" inputmode="decimal" placeholder="Neuer Wert" aria-label="Neuer Wert für ${esc(a.name)}">
+          <input type="date" value="${todayISO()}" aria-label="Gültig ab">
+          <button class="btn small" data-fin="asset-save">Speichern</button>
+          <button class="icon-btn" data-fin="asset-del" data-id="${esc(a.id)}" aria-label="Letzten Wert von ${esc(a.name)} löschen" title="Letzten Wert löschen">${ms('delete')}</button>
+        </div>`).join('')}
+        <div class="fin-asset fin-asset-new">
+          <input type="text" placeholder="Name, z. B. Haus" aria-label="Name" data-k="name">
+          <input type="text" inputmode="decimal" placeholder="Wert, Schuld mit Minus" aria-label="Wert" data-k="amount">
+          <input type="date" value="${todayISO()}" aria-label="Gültig ab" data-k="date">
+          <button class="btn small" data-fin="asset-add">Hinzufügen</button>
+        </div></div></details>`;
+  }
+
   // ---------- Auswertung ----------
-  const ui = { year: String(new Date().getFullYear()), month: null, filter: 'open', msg: '', busy: false };
+  const ui = { year: String(new Date().getFullYear()), month: null, filter: 'open', msg: '', busy: false, assetsOpen: false };
 
   function enriched() {
     return S.finance.map(t => {
@@ -299,7 +444,17 @@
     const biz = -sum(sel, 'biz');
     const saved = -sum(sel, 'save');
     const prop = -sum(sel, 'prop');
-    const left = income - out - biz;
+    // Steuerrücklage: Umsatzsteuer in den Geschäftseinnahmen, die am Ende des Zeitraums noch nicht ans Finanzamt ging
+    const endKey = ui.month !== null ? `${ui.year}-${String(ui.month + 1).padStart(2, '0')}`
+      : yearRows.reduce((m, t) => (t.date.slice(0, 7) > m ? t.date.slice(0, 7) : m), `${ui.year}-01`);
+    const openKeys = Array.from({ length: UST_OPEN_MONTHS }, (_, i) => {
+      const d = new Date(Date.UTC(+endKey.slice(0, 4), +endKey.slice(5, 7) - 1 - i, 1));
+      return d.toISOString().slice(0, 7);
+    }).reverse();
+    const grossOpen = counted.filter(t => t.cat === 'Gehalt vom Hauptjob' && openKeys.includes(t.date.slice(0, 7))).reduce((s, t) => s + t.amount, 0);
+    const reserve = Math.max(0, Math.round(grossOpen * UST_RATE / (1 + UST_RATE)));
+    const beforeReserve = income - out - biz;
+    const left = beforeReserve - reserve;
     const rate = income > 0 ? Math.round((left / income) * 100) : null;
     const period = ui.month === null ? ui.year : `${MONTHS_LONG[ui.month]} ${ui.year}`;
     const open = tx.filter(t => !t.cat);
@@ -346,9 +501,11 @@
         <div><span>Einnahmen</span><b>${eur0(income)}</b></div>
         <div><span>Ausgaben privat</span><b>${eur0(out)}</b></div>
         <div><span>Ausgaben geschäftlich</span><b>${eur0(biz)}</b></div>
-        <div><span>Übrig</span><b class="${left >= 0 ? 'ok' : 'bad'}">${eur0(left)}</b><small>${rate === null ? '' : `Sparquote ${rate} %`}</small></div>
+        <div title="Umsatzsteuer aus den Geschäftseinnahmen dieser Monate, die noch ans Finanzamt geht (Dauerfristverlängerung). Einkommensteuer-Nachzahlungen sind nicht enthalten."><span>Steuerrücklage</span><b>${eur0(reserve)}</b><small>offene USt ${openKeys.map(k => MONTHS[+k.slice(5, 7) - 1]).join(' + ')}</small></div>
+        <div><span>Übrig nach Rücklage</span><b class="${left >= 0 ? 'ok' : 'bad'}">${eur0(left)}</b><small>vor Rücklage ${eur0(beforeReserve)}${rate === null ? '' : ` · Sparquote ${rate} %`}</small></div>
       </section>
       ${saved || prop ? `<p class="hint">${[saved ? `Gespart und angelegt: ${eur0(saved)}` : '', prop ? `Immobilie (Kauf & Umbau über Kredit, nicht in den Ausgaben): ${eur0(prop)}` : ''].filter(Boolean).join(' · ')}.</p>` : ''}
+      ${wealthView(tx)}
       <h2 class="ct-h">Monate ${esc(ui.year)}</h2>
       ${chart(yearRows)}
       <h2 class="ct-h">Jahresübersicht ${esc(ui.year)}</h2>
@@ -385,6 +542,18 @@
       ui.msg = `Regel gespeichert: alles von „${t.payee}“ → ${cat}.`;
       S.saveFmeta({ ...(old || {}), type: 'rule', match, cat });
     } else if (a === 'rule-del') S.deleteFmeta(b.dataset.id);
+    else if (a === 'assets-toggle') ui.assetsOpen = !b.closest('details').open;
+    else if (a === 'asset-save' || a === 'asset-add') {
+      const row = b.closest('.fin-asset');
+      const [first, second, third] = row.querySelectorAll('input');
+      const name = a === 'asset-add' ? first.value.trim() : row.dataset.name;
+      const amount = parseEuro(a === 'asset-add' ? second.value : first.value);
+      const date = (a === 'asset-add' ? third : second).value || todayISO();
+      if (!name || amount === null) { ui.msg = 'Bitte Name und Wert eintragen, Schulden mit Minus.'; rerender(); return; }
+      ui.assetsOpen = true;
+      ui.msg = `${name}: ${eur0(amount)} ab ${new Date(date).toLocaleDateString('de-DE')} gespeichert.`;
+      S.saveFmeta({ type: 'asset', name, date, amount });
+    } else if (a === 'asset-del') { ui.assetsOpen = true; S.deleteFmeta(b.dataset.id); }
   });
   document.addEventListener('change', async ev => {
     const el = ev.target;
@@ -409,5 +578,5 @@
     }
   });
 
-  window.TB_FINANZEN = { view, CATS, _test: { parseCSV, toCents, toISO, categorize, rowsToFinance } };
+  window.TB_FINANZEN = { view, CATS, _test: { parseCSV, toCents, toISO, categorize, rowsToFinance, balanceIndex, balancesAt, worthAt, parseEuro } };
 })();

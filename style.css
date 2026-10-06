@@ -514,7 +514,10 @@ img.missing { opacity: .35; }
 .fin-msg { background: var(--accent-soft); color: var(--ink); border-radius: 10px; padding: 10px 12px; margin: 0 0 12px; font-size: 14px; }
 .fin-years, .fin-months { margin-bottom: 8px; }
 .fin-kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 12px 0 6px; }
-@media (min-width: 640px) { .fin-kpis { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 640px) { .fin-kpis { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 900px) { .fin-kpis { grid-template-columns: repeat(5, 1fr); } }
+.fin-kpis > div:last-child { grid-column: span 2; }
+@media (min-width: 640px) { .fin-kpis > div:last-child { grid-column: auto; } }
 .fin-kpis > div { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 14px; display: flex; flex-direction: column; }
 .fin-kpis span { color: var(--ink-2); font-size: 13px; }
 .fin-kpis b { font-size: 21px; font-variant-numeric: tabular-nums; }
@@ -530,6 +533,18 @@ img.missing { opacity: .35; }
 .fin-table td.sum, .fin-table td.avg { font-weight: 600; }
 .fin-table .sel { background: var(--accent-soft); }
 .fin-list { margin-top: 8px; }
+.fin-table td.pos { color: var(--ok); } .fin-table td.neg { color: var(--danger); }
+.fin-assets .list { margin-top: 10px; }
+.fin-asset { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.fin-asset > span { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: 12px; }
+.fin-asset small { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.fin-asset input { height: 40px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); padding: 0 12px; font-size: 16px; min-width: 0; width: 100%; -webkit-appearance: none; appearance: none; }
+.fin-asset-new { border-bottom: 0; }
+@media (min-width: 720px) {
+  .fin-asset { grid-template-columns: minmax(180px, 1.4fr) 1fr 150px auto auto; }
+  .fin-asset > span { grid-column: auto; flex-direction: column; gap: 0; }
+  .fin-asset-new { grid-template-columns: minmax(180px, 1.4fr) 1fr 150px auto; }
+}
 .fin-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
 .fin-row:last-child { border-bottom: 0; }
 .fin-main { min-width: 0; }
