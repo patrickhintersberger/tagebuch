@@ -96,6 +96,14 @@
     pairList(a).forEach(([x, y]) => { const w = (a['w.pairs'] || {})[x + '|' + y]; if (w in wins) wins[w]++; });
     return Object.entries(wins).sort((p, q) => q[1] - p[1]);
   }
+  // Priorisierung der Kernwerte: jedes Paar einmal, egal in welcher Reihenfolge es gespeichert ist
+  const prioWin = (a, x, y) => { const p = a['w.prio'] || {}; return p[x + '|' + y] || p[y + '|' + x]; };
+  function prioPairs(a) { const c = a['w.core'] || [], out = []; c.forEach((x, i) => c.slice(i + 1).forEach(y => out.push([x, y]))); return out; }
+  function prioRank(a) {
+    const wins = Object.fromEntries((a['w.core'] || []).map(v => [v, 0]));
+    prioPairs(a).forEach(([x, y]) => { const w = prioWin(a, x, y); if (w in wins) wins[w]++; });
+    return Object.entries(wins).sort((p, q) => q[1] - p[1]);
+  }
   function field(f, a, bk) {
     const label = f.label ? `<label class="id-q">${esc(f.label)}</label>` : '';
     const hint = f.hint ? `<p class="hint">${esc(f.hint)}</p>` : '';
@@ -128,6 +136,16 @@
           <form class="id-addv" data-act-form="id-vadd"><input name="v" placeholder="Anderen Wert hinzufügen" list="id-wl" autocomplete="off"><button class="btn ghost small" aria-label="Hinzufügen">${ms('add')}</button></form>
           <datalist id="id-wl">${(bk.werteListe || []).map(v => `<option value="${esc(v)}">`).join('')}</datalist></div></div>`;
       }
+      case 'valueprio': {
+        const core = a['w.core'] || [];
+        if (core.length < 2) return '';
+        const pairs = prioPairs(a), done = pairs.filter(([x, y]) => prioWin(a, x, y)).length;
+        const rank = prioRank(a), sorted = rank.map(r => r[0]).join('|') === core.join('|');
+        return `<div class="id-f"><label class="id-q">Was ist mir am wichtigsten im Leben? <span class="id-count">${done} von ${pairs.length}</span></label>
+          <div class="id-pairs">${pairs.map(([x, y], i) => { const w = prioWin(a, x, y); return `<div class="id-pair"><i>${i + 1}</i>${[x, y].map(v => `<button class="id-chip" data-act="id-vprio" data-p="${esc(x + '|' + y)}" data-v="${esc(v)}" aria-pressed="${w === v}">${esc(v)}</button>`).join('<span>vs</span>')}</div>`; }).join('')}</div></div>
+          <div class="id-f"><label class="id-q">Meine Kernwerte</label><ol class="id-rank">${core.map(v => `<li><b>${esc(v)}</b><span>${(rank.find(r => r[0] === v) || [0, 0])[1]}× am wichtigsten</span></li>`).join('')}</ol>
+          ${done && !sorted ? `<div class="id-row"><button class="btn ghost small" data-act="id-vprioapply">Nach dem Vergleich sortieren: ${esc(rank.map(r => r[0]).join(', '))}</button></div>` : ''}</div>`;
+      }
       case 'valueconds': {
         const core = a['w.core'] || [];
         if (!core.length) return '<p class="hint">Lege zuerst deine Kernwerte fest.</p>';
@@ -155,7 +173,8 @@
       case 'list': { const h = li(a[f.k] || []); return h ? q + h : ''; }
       case 'valuepick': return (a[f.k] || []).length ? `<p>${esc(a[f.k].join(', '))}</p>` : '';
       case 'valuepairs': return a['w.intuitiv'] ? `<p>Intuitiv: <b>${esc(a['w.intuitiv'])}</b></p><ol class="id-rank">${ranking(a).map(([v, n]) => `<li><b>${esc(v)}</b><span>${n}× wichtiger</span></li>`).join('')}</ol>` : '';
-      case 'valuecore': return (a[f.k] || []).length ? `<p><b>${esc(a[f.k].join(', '))}</b></p>` : '';
+      case 'valuecore': return (a[f.k] || []).length ? `<ol class="id-beliefs">${a[f.k].map(v => `<li><b>${esc(v)}</b></li>`).join('')}</ol>` : '';
+      case 'valueprio': return '';
       case 'valueconds': return (a['w.core'] || []).map(v => (a['w.cond'] || {})[v] ? `<div class="id-value"><b>${esc(v)}</b><ul>${a['w.cond'][v].split('\n').filter(l => l.trim()).map(l => `<li>${esc(l.trim())}</li>`).join('')}</ul></div>` : '').join('');
       case 'framework': return (a[f.k] || []).filter(b => Object.values(b).some(Boolean)).map((b, i) => `<div class="id-fw"><h4>Glaubenssatz Nummer ${i + 1}</h4>${f.steps.filter(([st]) => b[st]).map(([st, t]) => `<p class="id-q">${esc(t)}</p><div class="ed-read">${render(b[st])}</div>`).join('')}</div>`).join('');
       case 'inspiration': return li(a[f.k] || []);
@@ -288,6 +307,8 @@
     'id-vintu': el => change(a => { a['w.intuitiv'] = a['w.intuitiv'] === el.dataset.v ? '' : el.dataset.v; }),
     'id-vpair': el => change(a => { a['w.pairs'] = { ...(a['w.pairs'] || {}), [el.dataset.p]: el.dataset.v }; }),
     'id-vcore': el => change(a => { a['w.core'] = toggle(a['w.core'] || [], el.dataset.v, 5); }),
+    'id-vprio': el => change(a => { const p = { ...(a['w.prio'] || {}) }; const [x, y] = el.dataset.p.split('|'); delete p[y + '|' + x]; p[el.dataset.p] = el.dataset.v; a['w.prio'] = p; }),
+    'id-vprioapply': () => change(a => { a['w.core'] = prioRank(a).map(r => r[0]); }),
     'id-vsugg': () => change(a => { a['w.core'] = [a['w.intuitiv'], ...ranking(a).slice(0, 4).map(r => r[0])]; }),
     'id-insp': el => change(a => { a['g.insp'] = toggle(a['g.insp'] || [], el.dataset.v, Infinity); }),
     'id-fwadd': () => change(a => { const l = a['g.fw'] && a['g.fw'].length ? a['g.fw'].slice() : [{}]; l.push({}); a['g.fw'] = l; }),
