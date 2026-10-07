@@ -701,4 +701,6 @@ img.missing { opacity: .35; }
 .id-old { border-top: 1px solid var(--line); padding: 8px 0; }
 .id-old summary { cursor: pointer; font-weight: 600; }
 .id-foot { margin-top: 10px; }
+.id-oldh { margin: 14px 0 2px; font-size: 15px; color: var(--accent); }
+.id-old .ed-read { min-height: 0; }
 @media (max-width: 560px) { .id-score button { width: 26px; height: 28px; } .id-score div { gap: 2px; } }

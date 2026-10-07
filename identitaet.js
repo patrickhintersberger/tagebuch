@@ -146,6 +146,23 @@
     return '';
   }
 
+  // Ein Feld einer früheren Runde nur zum Lesen
+  function readField(f, a) {
+    const q = f.label ? `<p class="id-q">${esc(f.label)}</p>` : '';
+    const li = l => l.filter(Boolean).length ? `<ol class="id-beliefs">${l.filter(Boolean).map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : '';
+    switch (f.type) {
+      case 'text': return a[f.k] ? q + `<div class="ed-read">${render(a[f.k])}</div>` : '';
+      case 'list': { const h = li(a[f.k] || []); return h ? q + h : ''; }
+      case 'valuepick': return (a[f.k] || []).length ? `<p>${esc(a[f.k].join(', '))}</p>` : '';
+      case 'valuepairs': return a['w.intuitiv'] ? `<p>Intuitiv: <b>${esc(a['w.intuitiv'])}</b></p><ol class="id-rank">${ranking(a).map(([v, n]) => `<li><b>${esc(v)}</b><span>${n}× wichtiger</span></li>`).join('')}</ol>` : '';
+      case 'valuecore': return (a[f.k] || []).length ? `<p><b>${esc(a[f.k].join(', '))}</b></p>` : '';
+      case 'valueconds': return (a['w.core'] || []).map(v => (a['w.cond'] || {})[v] ? `<div class="id-value"><b>${esc(v)}</b><ul>${a['w.cond'][v].split('\n').filter(l => l.trim()).map(l => `<li>${esc(l.trim())}</li>`).join('')}</ul></div>` : '').join('');
+      case 'framework': return (a[f.k] || []).filter(b => Object.values(b).some(Boolean)).map((b, i) => `<div class="id-fw"><h4>Glaubenssatz Nummer ${i + 1}</h4>${f.steps.filter(([st]) => b[st]).map(([st, t]) => `<p class="id-q">${esc(t)}</p><div class="ed-read">${render(b[st])}</div>`).join('')}</div>`).join('');
+      case 'inspiration': return li(a[f.k] || []);
+    }
+    return '';
+  }
+
   // ---------- Ansichten ----------
   let force = false;
   function rerender() { force = true; window.TB_RERENDER(); }
@@ -165,7 +182,7 @@
     main.innerHTML = `<div class="page id-page">${head(name, mod.kicker)}
       <p class="id-intro">${esc(mod.intro)}</p>
       ${mod.sections.map((s, i) => `<section class="set id-sec"><h3><i>${i + 1}</i>${esc(s.title)}</h3>${s.intro ? `<p class="hint">${esc(s.intro)}</p>` : ''}${s.fields.map(f => field(f, a, bk)).join('')}</section>`).join('')}
-      ${older.length ? `<section class="set"><h3>Frühere Runden</h3>${older.map(r => { const oa = answers(r); const txt = mod.sections.flatMap(s => s.fields).filter(f => f.type === 'text' && oa[f.k]).map(f => `<p class="id-q">${esc(f.label)}</p><div class="ed-read">${render(oa[f.k])}</div>`).join(''); return `<details class="id-old"><summary>Runde vom ${esc(fmt(r.date))}</summary>${txt || '<p class="hint">Keine Texte in dieser Runde.</p>'}</details>`; }).join('')}</section>` : ''}
+      ${older.length ? `<section class="set"><h3>Frühere Runden</h3>${older.map(r => { const oa = answers(r); const txt = mod.sections.map(sec => { const body = sec.fields.map(f => readField(f, oa)).join(''); return body ? `<h4 class="id-oldh">${esc(sec.title)}</h4>${body}` : ''; }).join(''); return `<details class="id-old"><summary>Runde vom ${esc(fmt(r.date))}</summary>${txt || '<p class="hint">Keine Texte in dieser Runde.</p>'}</details>`; }).join('')}</section>` : ''}
       ${current() && !(due() || {}).over ? `<p class="hint id-foot"><button class="btn ghost small" data-act="id-round">Neue Runde schon jetzt beginnen</button></p>` : ''}
     </div>`;
     $$('.id-ta', main).forEach(grow);
