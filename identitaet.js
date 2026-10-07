@@ -3,7 +3,7 @@
 // Die Inhalte des Buchs (Fragen, Werteliste, Manifest) stehen NICHT im Code, weil das App-Repo öffentlich ist,
 // sondern als Eintrag '_buch' in data/identity.json im privaten Daten-Repo. Der Code stellt sie nur dar.
 // Weitere Einträge dort: Runden (kind 'round', alle Antworten in a), Check-Ins je Monat (kind 'checkin')
-// und gelesene Tage (kind 'read'). Alle 90 Tage beginnt eine neue Runde mit den Antworten der letzten als Startpunkt.
+// und gelesene Tage (kind 'read'). Alle 90 Tage beginnt eine neue Runde komplett leer – Patrick startet jedes Mal bei null.
 (function () {
   'use strict';
   const S = window.TB_STORE;
@@ -153,7 +153,7 @@
     const cur = current(), d = due();
     return `<header class="page-head"><h1>${esc(VIEWS[name][0])}</h1></header>
       <p class="id-kicker">${ms(VIEWS[name][1])} Identität${sub ? ' · ' + esc(sub) : ''}</p>
-      ${d && d.over ? `<section class="id-due">${ms('autorenew')}<div><b>Die 90 Tage sind um.</b><span>Zeit für deinen nächsten Zyklus: Identity-Skript anpassen, Glaubenssätze überprüfen und schärfen, Werte überprüfen. Deine jetzigen Antworten werden übernommen, die alte Fassung bleibt erhalten.</span></div><button class="btn" data-act="id-round">Neue Runde beginnen</button></section>`
+      ${d && d.over ? `<section class="id-due">${ms('autorenew')}<div><b>Die 90 Tage sind um.</b><span>Zeit für deinen nächsten Zyklus: Du startest mit leeren Seiten bei null. Deine jetzige Runde bleibt unter „Frühere Runden“ erhalten.</span></div><button class="btn" data-act="id-round">Neue Runde beginnen</button></section>`
         : cur && d ? `<p class="hint">Runde vom ${esc(fmt(cur.date))} · nächste Überarbeitung am ${esc(fmt(d.next))} (in ${d.left} ${d.left === 1 ? 'Tag' : 'Tagen'})</p>` : ''}`;
   }
   const noBook = name => `<div class="page id-page">${head(name)}<section class="set"><p class="hint">Die Inhalte des Buchs liegen in deinem privaten Daten-Repo (data/identity.json) und werden beim Synchronisieren geladen. Prüfe in den Einstellungen, ob Daily mit GitHub verbunden ist.</p></section></div>`;
@@ -173,7 +173,11 @@
 
   // Zum Lesen morgens und abends: Statement, Skript, Überzeugungen, Werte, Zielbild, Manifest
   function viewToday(main) {
-    const bk = book(), a = answers(current());
+    const bk = book();
+    // Je Feld die neueste Runde, in der es ausgefüllt ist (eine neue Runde startet leer)
+    const filled = v => Array.isArray(v) ? v.some(Boolean) : v && typeof v === 'object' ? Object.values(v).some(Boolean) : !!v;
+    const a = {};
+    rounds().forEach(r => Object.entries(answers(r)).forEach(([k, v]) => { if (filled(v)) a[k] = v; }));
     const rd = items().find(x => x.id === 'rd-' + today()) || {};
     const readOn = d => { const x = items().find(y => y.id === 'rd-' + d); return !!(x && (x.m || x.e)); };
     let streak = 0;
@@ -258,9 +262,9 @@
   function newRound() {
     flush();
     const cur = current(); if (!cur) return;
-    if (!confirm('Neue 90-Tage-Runde beginnen? Deine jetzigen Antworten werden als Startpunkt übernommen, die alte Fassung bleibt unter „Frühere Runden“ erhalten.')) return;
+    if (!confirm('Neue 90-Tage-Runde beginnen? Alle Seiten starten wieder leer. Deine jetzige Runde bleibt unter „Frühere Runden“ erhalten.')) return;
     const id = 'r-' + today();
-    S.saveIdentity({ id: rounds().some(r => r.id === id) ? id + '-' + Date.now().toString(36) : id, kind: 'round', date: today(), a: JSON.parse(JSON.stringify(answers(cur))) });
+    S.saveIdentity({ id: rounds().some(r => r.id === id) ? id + '-' + Date.now().toString(36) : id, kind: 'round', date: today(), a: {} });
   }
   const actions = {
     'id-vpick': el => change(a => { a['w.picked'] = toggle(a['w.picked'] || [], el.dataset.v, 9); }),
