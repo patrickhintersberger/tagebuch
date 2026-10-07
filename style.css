@@ -637,3 +637,17 @@ img.missing { opacity: .35; }
 .ed-read .rt-h { font-weight: 700; }
 .ed-read .rt-h { text-transform: none; letter-spacing: 0; color: var(--ink); font-size: 1.05em; }
 .ed-read hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
+
+/* Identität */
+.id-kicker { display: flex; align-items: center; gap: 6px; color: var(--ink-3); font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; margin: -6px 0 12px; }
+.id-kicker .ms { font-size: 18px; }
+.id-due { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--accent-soft); border-radius: 14px; padding: 14px 16px; margin-bottom: 14px; }
+.id-due > .ms { color: var(--accent); font-size: 26px; }
+.id-due div { flex: 1 1 220px; display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.id-box .id-text { width: 100%; min-height: 240px; }
+.id-read { cursor: text; }
+.id-read .id-h { font-weight: 700; margin-top: 8px; }
+.id-read .id-h1 { font-size: 1.25em; } .id-read .id-h2 { font-size: 1.1em; }
+.id-old { border-top: 1px solid var(--line); padding: 8px 0; }
+.id-old summary { cursor: pointer; font-weight: 600; }
+.id-foot { margin-top: 10px; }

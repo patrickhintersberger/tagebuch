@@ -13,6 +13,7 @@
     habits: {},     // id -> Gewohnheit
     logs: {},       // id (Gewohnheit_Datum) -> Tageswert einer Gewohnheit
     bucket: {},     // id -> Ziel der Bucket-Liste (id '_profile' = Geburtsdatum)
+    identity: {},   // id -> 90-Tage-Runde der Identität (Identity-Script, perfekter Tag, Werte), Datei data/identity.json
     push: {},       // id -> Gerät, das die tägliche Erinnerung bekommt (Push-Abo)
     finance: {},    // id -> Buchung (Finanzen), Datei je Jahr: data/f2026.json
     fmeta: {},      // id -> Kategorie-Regel bzw. Einstellung der Finanzen, Datei data/fmeta.json
@@ -74,6 +75,7 @@
       store.logs = s.logs || {};
       store.push = s.push || {};
       store.bucket = s.bucket || {};
+      store.identity = s.identity || {};
       store.finance = s.finance || {};
       store.fmeta = s.fmeta || {};
       store.pending = s.pending || [];
@@ -87,7 +89,7 @@
     });
   }
   function saveLocal() {
-    return idbSet('kv', 'state', { entries: store.entries, templates: store.templates, habits: store.habits, logs: store.logs, push: store.push, bucket: store.bucket, finance: store.finance, fmeta: store.fmeta, pending: store.pending, pendingThumbs: store.pendingThumbs, shas: store.shas, dirty: store.dirty });
+    return idbSet('kv', 'state', { entries: store.entries, templates: store.templates, habits: store.habits, logs: store.logs, push: store.push, bucket: store.bucket, identity: store.identity, finance: store.finance, fmeta: store.fmeta, pending: store.pending, pendingThumbs: store.pendingThumbs, shas: store.shas, dirty: store.dirty });
   }
 
   let saveTimer = null;
@@ -147,6 +149,7 @@
       habits: Object.values(store.habits),
       logs: Object.values(store.logs),
       bucket: Object.values(store.bucket),
+      identity: Object.values(store.identity),
       finance: Object.values(store.finance).sort(byWhen),
       fmeta: Object.values(store.fmeta),
     }, null, 1);
@@ -156,7 +159,7 @@
   const yearOf = e => (e.date || '0000').slice(0, 4);
   // Dateischlüssel -> Sammlung: 'templates', 'habits', '2026' (Einträge), 'h2026' (Gewohnheits-Tageswerte),
   // 'f2026' (Buchungen der Finanzen), 'fmeta' (Kategorie-Regeln). Wichtig: 'f…' vor dem Rückfall auf Einträge abfangen.
-  const SINGLE = ['templates', 'habits', 'push', 'bucket', 'fmeta'];
+  const SINGLE = ['templates', 'habits', 'push', 'bucket', 'identity', 'fmeta'];
   const collOf = key => SINGLE.includes(key) ? key : key[0] === 'h' ? 'logs' : key[0] === 'f' ? 'finance' : 'entries';
   function bucket(key) {
     const c = collOf(key);
@@ -168,7 +171,7 @@
   function bucketKeys() { return [...new Set([...SINGLE, ...Object.values(store.entries).map(yearOf), ...Object.values(store.logs).map(l => 'h' + yearOf(l)), ...Object.values(store.finance).map(f => 'f' + yearOf(f))])]; }
   function fileBody(key) {
     const c = collOf(key);
-    const items = c === 'entries' || c === 'finance' ? bucket(key).sort(byWhen) : bucket(key).sort((x, y) => String(x.name || x.id).localeCompare(String(y.name || y.id)));
+    const items = c === 'entries' || c === 'finance' || c === 'identity' ? bucket(key).sort(byWhen) : bucket(key).sort((x, y) => String(x.name || x.id).localeCompare(String(y.name || y.id)));
     return JSON.stringify({ version: 1, ...(c === 'entries' ? { year: key } : {}), [c]: items }, null, 1);
   }
   const revs = {}; // zählt Änderungen je Datei, damit Änderungen während eines Uploads nicht verloren gehen
@@ -220,7 +223,7 @@
     if (!res.ok) throw new Error(`GitHub antwortet mit Fehler ${res.status}.`);
     const list = await res.json();
     const out = {};
-    (Array.isArray(list) ? list : []).forEach(f => { const m = /^(templates|habits|push|bucket|fmeta|[hf]?\d{4})\.json$/.exec(f.name); if (m) out[m[1]] = f.sha; });
+    (Array.isArray(list) ? list : []).forEach(f => { const m = /^(templates|habits|push|bucket|identity|fmeta|[hf]?\d{4})\.json$/.exec(f.name); if (m) out[m[1]] = f.sha; });
     return out;
   }
 
@@ -600,6 +603,22 @@
       markDirty('bucket');
       emit(); schedulePush();
     },
+    // ---------- Identität (90-Tage-Runden) ----------
+    get identity() { return Object.values(store.identity).filter(r => !r.deleted).sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.createdAt || 0) - (b.createdAt || 0)); },
+    saveIdentity(r) {
+      const now = Date.now();
+      const item = { createdAt: now, ...r, updatedAt: now };
+      if (!item.id) item.id = uid();
+      store.identity[item.id] = item;
+      markDirty('identity');
+      emit(); schedulePush();
+      return item;
+    },
+    deleteIdentity(id) {
+      store.identity[id] = { id, deleted: true, updatedAt: Date.now() };
+      markDirty('identity');
+      emit(); schedulePush();
+    },
     get pushSubs() { return Object.values(store.push).filter(p => !p.deleted); },
     savePushSub(item) {
       store.push[item.id] = { ...item, updatedAt: Date.now() };
@@ -663,6 +682,7 @@
       // Zählt alles Neue (Einträge, Vorlagen, Ziele, Gewohnheiten, Finanzen), damit die Meldung beim Einlesen stimmt
       (data.templates || []).forEach(t => { if (t && t.id && !store.templates[t.id]) { store.templates[t.id] = { ...t, updatedAt: now }; markDirty('templates'); n++; } });
       (data.bucket || []).forEach(b => { if (b && b.id && !store.bucket[b.id]) { store.bucket[b.id] = { ...b, updatedAt: now }; markDirty('bucket'); n++; } });
+      (data.identity || []).forEach(r => { if (r && r.id && !store.identity[r.id]) { store.identity[r.id] = { ...r, updatedAt: now }; markDirty('identity'); n++; } });
       (data.habits || []).forEach(h => { if (h && h.id && !store.habits[h.id]) { store.habits[h.id] = { ...h, updatedAt: now }; markDirty('habits'); n++; } });
       (data.logs || []).forEach(l => { if (l && l.id && l.date && !store.logs[l.id]) { store.logs[l.id] = { ...l, updatedAt: now }; markDirty('h' + yearOf(l)); n++; } });
       (data.finance || []).forEach(f => { if (f && f.id && f.date && !store.finance[f.id]) { store.finance[f.id] = { ...f, updatedAt: now }; markDirty('f' + yearOf(f)); n++; } });

@@ -2,9 +2,9 @@
 // Beim Installieren wird die ganze App samt Bibliotheken und Schriften auf dem Gerät abgelegt.
 // Eigene Dateien kommen zuerst aus dem Netz (damit Updates sofort ankommen), aber nur, wenn das Netz
 // schnell antwortet; sonst sofort aus dem Zwischenspeicher. Bibliotheken und Schriften kommen direkt aus dem Zwischenspeicher.
-const CACHE = 'tagebuch-v47';
+const CACHE = 'tagebuch-v48';
 const LIBS = ['cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
-const SHELL = ['index.html', 'app.js', 'store.js', 'finanzen.js', 'freigabe.js', 'config.js', 'style.css', 'geo.js', 'manifest.webmanifest',
+const SHELL = ['index.html', 'app.js', 'store.js', 'finanzen.js', 'identitaet.js', 'freigabe.js', 'config.js', 'style.css', 'geo.js', 'manifest.webmanifest',
   'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'];
 const NET_WAIT = 3000; // so lange auf das Netz warten, wenn eine gespeicherte Fassung da ist
 

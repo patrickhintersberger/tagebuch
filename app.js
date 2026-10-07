@@ -1161,8 +1161,9 @@
   }
 
   // ---------- Rahmen ----------
-  const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags, countries: viewCountries, habits: viewHabits, bucket: viewBucket, life: viewLife, finanzen: main => { window.TB_FINANZEN.view(main); ui.built = 'finanzen'; }, templates: viewTemplates, share: viewShare };
-  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', travel: 'Reisekarte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten', bucket: 'Bucket-Liste', life: 'Lebenszeit', finanzen: 'Finanzen', templates: 'Vorlagen', share: 'Reisen freigeben' };
+  const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags, countries: viewCountries, habits: viewHabits, bucket: viewBucket, life: viewLife, finanzen: main => { window.TB_FINANZEN.view(main); ui.built = 'finanzen'; },
+    ...Object.fromEntries(Object.keys(window.TB_IDENTITAET.SECTIONS).map(k => [k, main => { window.TB_IDENTITAET.view(main, k); ui.built = k; }])), templates: viewTemplates, share: viewShare };
+  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', travel: 'Reisekarte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten', bucket: 'Bucket-Liste', life: 'Lebenszeit', finanzen: 'Finanzen', 'id-script': 'Identity-Script', 'id-tag': 'Der perfekte Tag', 'id-werte': 'Meine Werte', templates: 'Vorlagen', share: 'Reisen freigeben' };
   function render() {
     $$('#nav [data-nav]').forEach(b => b.setAttribute('aria-current', b.dataset.nav === ui.view ? 'page' : 'false'));
     const isMap = ui.view === 'map';
@@ -1202,6 +1203,7 @@
     btn.dataset.status = S.status;
     btn.title = S.statusText;
   }
+  window.TB_RERENDER = () => render();
   function go(view) {
     closeMenu();
     if (!ed && !$('#overlay').hidden) { editTpl = null; $('#overlay').hidden = true; $('#overlay').innerHTML = ''; }
@@ -1997,6 +1999,7 @@
     'cal-day': el => openDay(el.dataset.date),
     menu: () => { $('#nav').classList.add('open'); $('#nav-backdrop').hidden = false; },
     'menu-close': closeMenu,
+    ...window.TB_IDENTITAET.actions,
     'nav-grp': el => setGroup(el.closest('.nav-grp'), el.closest('.nav-grp').classList.contains('closed')),
     'care-open': openCare,
     'hb-date': el => { ui.hbDate = el.dataset.date; render(); },
