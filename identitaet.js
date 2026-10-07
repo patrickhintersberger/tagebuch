@@ -104,6 +104,50 @@
     prioPairs(a).forEach(([x, y]) => { const w = prioWin(a, x, y); if (w in wins) wins[w]++; });
     return Object.entries(wins).sort((p, q) => q[1] - p[1]);
   }
+  // ---------- Vergleich als Spiel: immer ein Paar groß, antippen, nächstes Paar ----------
+  let game = null; // { k: 'w.pairs' | 'w.prio', order: [[x, y]], flip: [bool], i }
+  const GAME = {
+    'w.pairs': { pairs: a => pairList(a), win: (a, x, y) => (a['w.pairs'] || {})[x + '|' + y], q: 'Welcher Wert ist dir wichtiger?' },
+    'w.prio': { pairs: a => prioPairs(a), win: (a, x, y) => prioWin(a, x, y), q: 'Was ist mir am wichtigsten im Leben?' },
+  };
+  const shuffle = l => { l = l.slice(); for (let i = l.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [l[i], l[j]] = [l[j], l[i]]; } return l; };
+  function gameStart(a, k, all) {
+    const g = GAME[k], pairs = g.pairs(a);
+    const order = shuffle(all ? pairs : pairs.filter(([x, y]) => !g.win(a, x, y)));
+    game = { k, order, flip: order.map(() => Math.random() < .5), i: 0 };
+  }
+  function gameBox(a, k) {
+    const g = GAME[k], pairs = g.pairs(a), done = pairs.filter(([x, y]) => g.win(a, x, y)).length;
+    if (!game || game.k !== k) {
+      const label = !done ? 'Vergleich starten' : done < pairs.length ? `Weiterspielen (${pairs.length - done} offen)` : 'Noch einmal durchspielen';
+      return `<div class="id-row"><button class="btn" data-act="id-gstart" data-k="${k}" data-all="${done === pairs.length ? 1 : 0}">${ms('play_arrow')} ${label}</button>${done && done < pairs.length ? `<button class="btn ghost small" data-act="id-gstart" data-k="${k}" data-all="1">Alle neu</button>` : ''}<span class="id-count">${done} von ${pairs.length} entschieden</span></div>`;
+    }
+    if (game.i >= game.order.length) return `<div class="id-game id-game-done">${ms('check')}<b>Fertig!</b><span>Dein Ergebnis steht direkt darunter.</span><button class="btn" data-act="id-gend">Schließen</button></div>`;
+    const [x, y] = game.order[game.i], sides = game.flip[game.i] ? [y, x] : [x, y], w = g.win(a, x, y);
+    return `<div class="id-game">
+      <div class="id-game-top"><span>${game.i + 1} von ${game.order.length}</span><button class="icon-btn" data-act="id-gend" aria-label="Beenden" title="Beenden">${ms('close')}</button></div>
+      <div class="id-game-bar"><i style="width:${(game.i / game.order.length) * 100}%"></i></div>
+      <p class="id-game-q">${esc(g.q)}</p>
+      <div class="id-game-pick">${sides.map((v, n) => `<button data-act="id-gpick" data-v="${esc(v)}" data-side="${n}" aria-pressed="${w === v}">${esc(v)}</button>`).join('<span>oder</span>')}</div>
+      <div class="id-game-foot">${game.i ? `<button class="btn ghost small" data-act="id-gback">${ms('arrow_back')} Zurück</button>` : '<span></span>'}<span class="hint">Am Computer auch mit den Pfeiltasten ← →</span></div>
+    </div>`;
+  }
+  function gamePick(v) {
+    if (!game || game.i >= game.order.length) return;
+    const [x, y] = game.order[game.i], k = game.k;
+    edit(a => {
+      if (k === 'w.pairs') a['w.pairs'] = { ...(a['w.pairs'] || {}), [x + '|' + y]: v };
+      else { const p = { ...(a['w.prio'] || {}) }; delete p[y + '|' + x]; p[x + '|' + y] = v; a['w.prio'] = p; }
+    });
+    flush(); game.i++; rerender();
+  }
+  document.addEventListener('keydown', ev => {
+    if (!game || game.i >= game.order.length || /INPUT|TEXTAREA/.test((document.activeElement || {}).tagName)) return;
+    const b = document.querySelectorAll('.id-game-pick button');
+    if (ev.key === 'ArrowLeft' && b[0]) { ev.preventDefault(); gamePick(b[0].dataset.v); }
+    if (ev.key === 'ArrowRight' && b[1]) { ev.preventDefault(); gamePick(b[1].dataset.v); }
+  });
+
   function field(f, a, bk) {
     const label = f.label ? `<label class="id-q">${esc(f.label)}</label>` : '';
     const hint = f.hint ? `<p class="hint">${esc(f.hint)}</p>` : '';
@@ -122,15 +166,16 @@
         const picked = a['w.picked'] || [];
         if (picked.length < 3) return '<p class="hint">Wähle zuerst oben deine 9 Werte.</p>';
         const pairs = pairList(a), done = pairs.filter(([x, y]) => (a['w.pairs'] || {})[x + '|' + y]).length;
-        return `<div class="id-f"><label class="id-q">Dein intuitiver Kernwert</label><div class="id-chips">${picked.map(v => `<button class="id-chip" data-act="id-vintu" data-v="${esc(v)}" aria-pressed="${a['w.intuitiv'] === v}">${esc(v)}</button>`).join('')}</div></div>
-          ${a['w.intuitiv'] ? `<div class="id-f"><label class="id-q">Welcher Wert ist dir wichtiger? <span class="id-count">${done} von ${pairs.length}</span></label>
-          <div class="id-pairs">${pairs.map(([x, y], i) => { const w = (a['w.pairs'] || {})[x + '|' + y]; return `<div class="id-pair"><i>${i + 1}</i>${[x, y].map(v => `<button class="id-chip" data-act="id-vpair" data-p="${esc(x + '|' + y)}" data-v="${esc(v)}" aria-pressed="${w === v}">${esc(v)}</button>`).join('<span>vs</span>')}</div>`; }).join('')}</div></div>
-          <div class="id-f"><label class="id-q">Ergebnis</label><ol class="id-rank">${ranking(a).map(([v, n]) => `<li><b>${esc(v)}</b><span>${n}× wichtiger</span></li>`).join('')}</ol></div>` : ''}`;
+        return `<div class="id-f"><label class="id-q">Dein intuitiver Kernwert</label><p class="hint">Optional: Der Wert, bei dem du ohne Nachdenken weißt, dass er dazugehört. Er wird nicht mitverglichen.</p><div class="id-chips">${picked.map(v => `<button class="id-chip" data-act="id-vintu" data-v="${esc(v)}" aria-pressed="${a['w.intuitiv'] === v}">${esc(v)}</button>`).join('')}</div></div>
+          <div class="id-f"><label class="id-q">Der Vergleich</label>${gameBox(a, 'w.pairs')}</div>
+          ${done ? `<details class="id-f id-all"><summary>Alle Entscheidungen anzeigen</summary>
+          <div class="id-pairs">${pairs.map(([x, y], i) => { const w = (a['w.pairs'] || {})[x + '|' + y]; return `<div class="id-pair"><i>${i + 1}</i>${[x, y].map(v => `<button class="id-chip" data-act="id-vpair" data-p="${esc(x + '|' + y)}" data-v="${esc(v)}" aria-pressed="${w === v}">${esc(v)}</button>`).join('<span>vs</span>')}</div>`; }).join('')}</div></details>` : ''}
+          ${done ? `<div class="id-f"><label class="id-q">Ergebnis</label><ol class="id-rank">${ranking(a).map(([v, n]) => `<li><b>${esc(v)}</b><span>${n}× wichtiger</span></li>`).join('')}</ol></div>` : ''}`;
       }
       case 'valuecore': {
         const core = a[f.k] || [];
         const pool = [...new Set([...core, ...(a['w.picked'] || [])])];
-        const sugg = a['w.intuitiv'] ? [a['w.intuitiv'], ...ranking(a).slice(0, 4).map(r => r[0])] : null;
+        const rk = ranking(a).filter(r => r[1]), sugg = rk.length ? [...(a['w.intuitiv'] ? [a['w.intuitiv']] : []), ...rk.map(r => r[0])].slice(0, 5) : null;
         return `<div class="id-f"><p class="id-count">${core.length} von ${f.max} gewählt</p><div class="id-chips">${pool.map(v => `<button class="id-chip" data-act="id-vcore" data-v="${esc(v)}" aria-pressed="${core.includes(v)}">${esc(v)}</button>`).join('')}</div>
           <div class="id-row">${sugg ? `<button class="btn ghost small" data-act="id-vsugg">Vorschlag aus dem Vergleich: ${esc(sugg.join(', '))}</button>` : ''}
           <form class="id-addv" data-act-form="id-vadd"><input name="v" placeholder="Anderen Wert hinzufügen" list="id-wl" autocomplete="off"><button class="btn ghost small" aria-label="Hinzufügen">${ms('add')}</button></form>
@@ -141,8 +186,8 @@
         if (core.length < 2) return '';
         const pairs = prioPairs(a), done = pairs.filter(([x, y]) => prioWin(a, x, y)).length;
         const rank = prioRank(a), sorted = rank.map(r => r[0]).join('|') === core.join('|');
-        return `<div class="id-f"><label class="id-q">Was ist mir am wichtigsten im Leben? <span class="id-count">${done} von ${pairs.length}</span></label>
-          <div class="id-pairs">${pairs.map(([x, y], i) => { const w = prioWin(a, x, y); return `<div class="id-pair"><i>${i + 1}</i>${[x, y].map(v => `<button class="id-chip" data-act="id-vprio" data-p="${esc(x + '|' + y)}" data-v="${esc(v)}" aria-pressed="${w === v}">${esc(v)}</button>`).join('<span>vs</span>')}</div>`; }).join('')}</div></div>
+        return `<div class="id-f"><label class="id-q">Priorisierung</label>${gameBox(a, 'w.prio')}</div>
+          ${done ? `<details class="id-f id-all"><summary>Alle Entscheidungen anzeigen</summary><div class="id-pairs">${pairs.map(([x, y], i) => { const w = prioWin(a, x, y); return `<div class="id-pair"><i>${i + 1}</i>${[x, y].map(v => `<button class="id-chip" data-act="id-vprio" data-p="${esc(x + '|' + y)}" data-v="${esc(v)}" aria-pressed="${w === v}">${esc(v)}</button>`).join('<span>vs</span>')}</div>`; }).join('')}</div></details>` : ''}
           <div class="id-f"><label class="id-q">Meine Kernwerte</label><ol class="id-rank">${core.map(v => `<li><b>${esc(v)}</b><span>${(rank.find(r => r[0] === v) || [0, 0])[1]}× am wichtigsten</span></li>`).join('')}</ol>
           ${done && !sorted ? `<div class="id-row"><button class="btn ghost small" data-act="id-vprioapply">Nach dem Vergleich sortieren: ${esc(rank.map(r => r[0]).join(', '))}</button></div>` : ''}</div>`;
       }
@@ -172,7 +217,7 @@
       case 'text': return a[f.k] ? q + `<div class="ed-read">${render(a[f.k])}</div>` : '';
       case 'list': { const h = li(a[f.k] || []); return h ? q + h : ''; }
       case 'valuepick': return (a[f.k] || []).length ? `<p>${esc(a[f.k].join(', '))}</p>` : '';
-      case 'valuepairs': return a['w.intuitiv'] ? `<p>Intuitiv: <b>${esc(a['w.intuitiv'])}</b></p><ol class="id-rank">${ranking(a).map(([v, n]) => `<li><b>${esc(v)}</b><span>${n}× wichtiger</span></li>`).join('')}</ol>` : '';
+      case 'valuepairs': return Object.keys(a['w.pairs'] || {}).length ? `${a['w.intuitiv'] ? `<p>Intuitiv: <b>${esc(a['w.intuitiv'])}</b></p>` : ''}<ol class="id-rank">${ranking(a).map(([v, n]) => `<li><b>${esc(v)}</b><span>${n}× wichtiger</span></li>`).join('')}</ol>` : '';
       case 'valuecore': return (a[f.k] || []).length ? `<ol class="id-beliefs">${a[f.k].map(v => `<li><b>${esc(v)}</b></li>`).join('')}</ol>` : '';
       case 'valueprio': return '';
       case 'valueconds': return (a['w.core'] || []).map(v => (a['w.cond'] || {})[v] ? `<div class="id-value"><b>${esc(v)}</b><ul>${a['w.cond'][v].split('\n').filter(l => l.trim()).map(l => `<li>${esc(l.trim())}</li>`).join('')}</ul></div>` : '').join('');
@@ -307,9 +352,13 @@
     'id-vintu': el => change(a => { a['w.intuitiv'] = a['w.intuitiv'] === el.dataset.v ? '' : el.dataset.v; }),
     'id-vpair': el => change(a => { a['w.pairs'] = { ...(a['w.pairs'] || {}), [el.dataset.p]: el.dataset.v }; }),
     'id-vcore': el => change(a => { a['w.core'] = toggle(a['w.core'] || [], el.dataset.v, 5); }),
+    'id-gstart': el => { flush(); gameStart(draft ? draft.a : answers(current()), el.dataset.k, el.dataset.all === '1'); rerender(); },
+    'id-gpick': el => gamePick(el.dataset.v),
+    'id-gback': () => { if (game && game.i) { game.i--; rerender(); } },
+    'id-gend': () => { game = null; rerender(); },
     'id-vprio': el => change(a => { const p = { ...(a['w.prio'] || {}) }; const [x, y] = el.dataset.p.split('|'); delete p[y + '|' + x]; p[el.dataset.p] = el.dataset.v; a['w.prio'] = p; }),
     'id-vprioapply': () => change(a => { a['w.core'] = prioRank(a).map(r => r[0]); }),
-    'id-vsugg': () => change(a => { a['w.core'] = [a['w.intuitiv'], ...ranking(a).slice(0, 4).map(r => r[0])]; }),
+    'id-vsugg': () => change(a => { a['w.core'] = [...(a['w.intuitiv'] ? [a['w.intuitiv']] : []), ...ranking(a).map(r => r[0])].slice(0, 5); }),
     'id-insp': el => change(a => { a['g.insp'] = toggle(a['g.insp'] || [], el.dataset.v, Infinity); }),
     'id-fwadd': () => change(a => { const l = a['g.fw'] && a['g.fw'].length ? a['g.fw'].slice() : [{}]; l.push({}); a['g.fw'] = l; }),
     'id-round': () => { newRound(); rerender(); },

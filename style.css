@@ -704,3 +704,21 @@ img.missing { opacity: .35; }
 .id-oldh { margin: 14px 0 2px; font-size: 15px; color: var(--accent); }
 .id-old .ed-read { min-height: 0; }
 @media (max-width: 560px) { .id-score button { width: 26px; height: 28px; } .id-score div { gap: 2px; } }
+.id-game { border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px 12px; background: var(--surface); margin-top: 6px; }
+.id-game-top { display: flex; justify-content: space-between; align-items: center; color: var(--ink-3); font-size: 13px; font-weight: 600; }
+.id-game-bar { height: 4px; border-radius: 4px; background: var(--surface-2); margin: 6px 0 14px; overflow: hidden; }
+.id-game-bar i { display: block; height: 100%; background: var(--accent); transition: width .25s; }
+.id-game-q { text-align: center; font-size: 17px; font-weight: 600; margin: 0 0 14px; }
+.id-game-pick { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; }
+.id-game-pick > span { color: var(--ink-3); font-size: 13px; }
+.id-game-pick button { min-height: 96px; border-radius: 14px; border: 2px solid var(--line); background: var(--surface-2); color: var(--ink); font: inherit; font-size: 19px; font-weight: 700; cursor: pointer; padding: 10px; transition: transform .08s, border-color .15s; word-break: break-word; }
+.id-game-pick button:hover { border-color: var(--accent); }
+.id-game-pick button:active { transform: scale(.97); }
+.id-game-pick button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.id-game-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; gap: 8px; }
+.id-game-done { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.id-game-done > .ms { color: var(--ok); font-size: 26px; }
+.id-game-done span { flex: 1; color: var(--ink-2); }
+.id-all summary { cursor: pointer; color: var(--accent); font-weight: 600; font-size: 14px; margin-bottom: 8px; }
+@media (max-width: 560px) { .id-game-pick button { min-height: 84px; font-size: 17px; } .id-game-foot .hint { display: none; } }
+.id-row .btn { white-space: normal; text-align: left; height: auto; }
