@@ -1162,8 +1162,8 @@
 
   // ---------- Rahmen ----------
   const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags, countries: viewCountries, habits: viewHabits, bucket: viewBucket, life: viewLife, finanzen: main => { window.TB_FINANZEN.view(main); ui.built = 'finanzen'; },
-    ...Object.fromEntries(Object.keys(window.TB_IDENTITAET.SECTIONS).map(k => [k, main => { window.TB_IDENTITAET.view(main, k); ui.built = k; }])), templates: viewTemplates, share: viewShare };
-  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', travel: 'Reisekarte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten', bucket: 'Bucket-Liste', life: 'Lebenszeit', finanzen: 'Finanzen', 'id-script': 'Identity-Script', 'id-tag': 'Der perfekte Tag', 'id-werte': 'Meine Werte', templates: 'Vorlagen', share: 'Reisen freigeben' };
+    ...Object.fromEntries(Object.keys(window.TB_IDENTITAET.VIEWS).map(k => [k, main => { window.TB_IDENTITAET.view(main, k); ui.built = k; }])), templates: viewTemplates, share: viewShare };
+  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', travel: 'Reisekarte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten', bucket: 'Bucket-Liste', life: 'Lebenszeit', finanzen: 'Finanzen', ...Object.fromEntries(Object.entries(window.TB_IDENTITAET.VIEWS).map(([k, v]) => [k, v[0]])), templates: 'Vorlagen', share: 'Reisen freigeben' };
   function render() {
     $$('#nav [data-nav]').forEach(b => b.setAttribute('aria-current', b.dataset.nav === ui.view ? 'page' : 'false'));
     const isMap = ui.view === 'map';
