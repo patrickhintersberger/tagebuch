@@ -1232,6 +1232,48 @@
     $$('#nav .nav-grp').forEach(g => { const c = closed.includes(g.dataset.grp); g.classList.toggle('closed', c); $('.nav-h', g).setAttribute('aria-expanded', c ? 'false' : 'true'); });
     openActiveGroup();
   }
+  // Reihenfolge der Menüpunkte je Gruppe selbst bestimmen (auf dem Gerät gespeichert)
+  const navOrder = () => { try { return JSON.parse(lsGet('tb-navorder') || '{}'); } catch { return {}; } };
+  function applyNavOrder() {
+    const o = navOrder();
+    $$('#nav .nav-grp').forEach(g => {
+      const box = $('.nav-items', g), list = o[g.dataset.grp];
+      if (list) list.forEach(id => { const b = $(`[data-nav="${id}"]`, box); if (b) box.insertBefore(b, $('.nav-sortbtn', box)); });
+      if (!$('.nav-sortbtn', box)) box.insertAdjacentHTML('beforeend', '<button class="nav-sortbtn" data-act="nav-sort"><span class="ms">swap_vert</span><span>Reihenfolge ändern</span></button>');
+    });
+  }
+  function saveNavOrder(g) {
+    const o = navOrder();
+    o[g.dataset.grp] = $$('.nav-items > [data-nav]', g).map(b => b.dataset.nav);
+    lsSet('tb-navorder', JSON.stringify(o));
+  }
+  function navSort(g, on) {
+    g.classList.toggle('sorting', on);
+    $$('.nav-items > [data-nav]', g).forEach(b => {
+      b.draggable = on;
+      const t = $('.nav-arrows', b); if (t) t.remove();
+      if (on) b.insertAdjacentHTML('beforeend', `<span class="nav-arrows"><span class="ms" data-act="nav-up" role="button" aria-label="Nach oben">arrow_upward</span><span class="ms" data-act="nav-down" role="button" aria-label="Nach unten">arrow_downward</span></span>`);
+    });
+    const sb = $('.nav-sortbtn', g);
+    sb.innerHTML = on ? '<span class="ms">check</span><span>Fertig</span>' : '<span class="ms">swap_vert</span><span>Reihenfolge ändern</span>';
+    if (!on) saveNavOrder(g);
+  }
+  function navMove(el, dir) {
+    const b = el.closest('[data-nav]'), box = b.parentElement;
+    if (dir < 0 && b.previousElementSibling && b.previousElementSibling.dataset.nav) box.insertBefore(b, b.previousElementSibling);
+    if (dir > 0 && b.nextElementSibling && b.nextElementSibling.dataset.nav) box.insertBefore(b.nextElementSibling, b);
+    saveNavOrder(b.closest('.nav-grp'));
+  }
+  let navDrag = null;
+  document.addEventListener('dragstart', ev => { const b = ev.target.closest && ev.target.closest('.sorting [data-nav]'); if (b) { navDrag = b; ev.dataTransfer.effectAllowed = 'move'; } });
+  document.addEventListener('dragover', ev => {
+    const b = navDrag && ev.target.closest && ev.target.closest('.sorting [data-nav]');
+    if (!b || b === navDrag || b.parentElement !== navDrag.parentElement) return;
+    ev.preventDefault();
+    const r = b.getBoundingClientRect();
+    b.parentElement.insertBefore(navDrag, ev.clientY < r.top + r.height / 2 ? b : b.nextElementSibling);
+  });
+  document.addEventListener('dragend', () => { if (navDrag) { saveNavOrder(navDrag.closest('.nav-grp')); navDrag = null; } });
   // Die Gruppe der gerade geöffneten Seite immer aufklappen
   function openActiveGroup() { const b = $(`#nav [data-nav="${ui.view}"]`); const g = b && b.closest('.nav-grp'); if (g && g.classList.contains('closed')) setGroup(g, true); }
   function closeMenu() { $('#nav').classList.remove('open'); $('#nav-backdrop').hidden = true; }
@@ -2000,6 +2042,9 @@
     menu: () => { $('#nav').classList.add('open'); $('#nav-backdrop').hidden = false; },
     'menu-close': closeMenu,
     ...window.TB_IDENTITAET.actions,
+    'nav-sort': el => { const g = el.closest('.nav-grp'); navSort(g, !g.classList.contains('sorting')); },
+    'nav-up': el => navMove(el, -1),
+    'nav-down': el => navMove(el, 1),
     'nav-grp': el => setGroup(el.closest('.nav-grp'), el.closest('.nav-grp').classList.contains('closed')),
     'care-open': openCare,
     'hb-date': el => { ui.hbDate = el.dataset.date; render(); },
@@ -2106,7 +2151,7 @@
 
   document.addEventListener('click', ev => {
     const nav = ev.target.closest('[data-nav]');
-    if (nav) return go(nav.dataset.nav);
+    if (nav && !nav.closest('.sorting')) return go(nav.dataset.nav);
     const el = ev.target.closest('[data-act]');
     if (!el) { if (ev.target.id === 'lightbox') closeLightbox(); return; }
     const fn = actions[el.dataset.act];
@@ -2149,6 +2194,7 @@
   }
 
   // ---------- Start ----------
+  applyNavOrder();
   initGroups();
   S.ready.then(() => {
     S.onChange(() => {

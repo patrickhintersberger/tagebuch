@@ -575,6 +575,12 @@ img.missing { opacity: .35; }
 .nav-grp.closed .nav-items { display: none; }
 .nav-grp .nav-h .ms { margin-left: auto; font-size: 20px; transition: transform .15s; }
 .nav-grp.closed .nav-h .ms { transform: rotate(-90deg); }
+/* Reihenfolge der Menüpunkte ändern */
+.nav .nav-sortbtn { display: none; }
+.nav-arrows { margin-left: auto; display: inline-flex; gap: 2px; }
+.nav-arrows .ms { font-size: 20px; padding: 4px; border-radius: 8px; color: var(--ink-2); cursor: pointer; }
+.nav-arrows .ms:hover { background: var(--line); color: var(--ink); }
+.nav-grp.sorting [data-nav] { cursor: grab; outline: 1px dashed var(--line); outline-offset: -2px; }
 @media (min-width: 900px) {
   .nav { overflow-y: auto; }
   .nav button { height: 40px; }
@@ -584,6 +590,9 @@ img.missing { opacity: .35; }
   .nav .nav-h:hover { background: var(--surface-2); }
   .nav .nav-items { display: flex; flex-direction: column; gap: 2px; }
   .nav-grp + button { margin-top: 10px; }
+  .nav .nav-items .nav-sortbtn { display: flex; height: 32px; font-size: 12.5px; color: var(--ink-3); }
+  .nav-grp:not(.sorting) .nav-sortbtn { opacity: 0; }
+  .nav-grp:hover .nav-sortbtn, .nav-grp:focus-within .nav-sortbtn, .nav.open .nav-sortbtn { opacity: 1; }
 }
 .fin-chart { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 12px 8px; }
 .fin-chart svg { width: 100%; height: auto; display: block; }
