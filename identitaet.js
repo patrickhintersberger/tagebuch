@@ -235,8 +235,11 @@
     return `<header class="page-head"><h1>${esc(VIEWS[name][0])}</h1></header>
       <p class="id-kicker">${ms(VIEWS[name][1])} Identität${sub ? ' · ' + esc(sub) : ''}</p>
       ${d && d.over ? `<section class="id-due">${ms('autorenew')}<div><b>Die 90 Tage sind um.</b><span>Zeit für deinen nächsten Zyklus: Du startest mit leeren Seiten bei null. Deine jetzige Runde bleibt unter „Frühere Runden“ erhalten.</span></div><button class="btn" data-act="id-round">Neue Runde beginnen</button></section>`
-        : cur && d ? `<p class="hint">Runde vom ${esc(fmt(cur.date))} · nächste Überarbeitung am ${esc(fmt(d.next))} (in ${d.left} ${d.left === 1 ? 'Tag' : 'Tagen'})</p>` : ''}`;
+        : cur && d ? `<p class="hint">Runde vom ${esc(fmt(cur.date))} · nächste Überarbeitung am ${esc(fmt(d.next))} (in ${d.left} ${d.left === 1 ? 'Tag' : 'Tagen'})</p>` : ''}
+      ${cur ? `<details class="id-old id-manage"><summary>Aktuelle Runde bearbeiten</summary>${roundTools(cur)}</details>` : ''}`;
   }
+  // Runde verwalten: Datum ändern oder löschen (z. B. wenn eine Runde aus Versehen doppelt angelegt wurde)
+  const roundTools = r => `<div class="id-rtools"><label>${ms('calendar_month')} Datum <input type="date" data-round-date="${esc(r.id)}" value="${esc(r.date)}" max="${today()}"></label><button class="btn ghost small" data-act="id-rdel" data-id="${esc(r.id)}">${ms('delete')} Runde löschen</button></div>`;
   const noBook = name => `<div class="page id-page">${head(name)}<section class="set"><p class="hint">Die Inhalte des Buchs liegen in deinem privaten Daten-Repo (data/identity.json) und werden beim Synchronisieren geladen. Prüfe in den Einstellungen, ob Daily mit GitHub verbunden ist.</p></section></div>`;
 
   function viewModule(main, name) {
@@ -246,7 +249,7 @@
     main.innerHTML = `<div class="page id-page">${head(name, mod.kicker)}
       <p class="id-intro">${esc(mod.intro)}</p>
       ${mod.sections.map((s, i) => `<section class="set id-sec"><h3><i>${i + 1}</i>${esc(s.title)}</h3>${s.intro ? `<p class="hint">${esc(s.intro)}</p>` : ''}${s.fields.map(f => field(f, a, bk)).join('')}</section>`).join('')}
-      ${older.length ? `<section class="set"><h3>Frühere Runden</h3>${older.map(r => { const oa = answers(r); const txt = mod.sections.map(sec => { const body = sec.fields.map(f => readField(f, oa)).join(''); return body ? `<h4 class="id-oldh">${esc(sec.title)}</h4>${body}` : ''; }).join(''); return `<details class="id-old"><summary>Runde vom ${esc(fmt(r.date))}</summary>${txt || '<p class="hint">Keine Texte in dieser Runde.</p>'}</details>`; }).join('')}</section>` : ''}
+      ${older.length ? `<section class="set"><h3>Frühere Runden</h3>${older.map(r => { const oa = answers(r); const txt = mod.sections.map(sec => { const body = sec.fields.map(f => readField(f, oa)).join(''); return body ? `<h4 class="id-oldh">${esc(sec.title)}</h4>${body}` : ''; }).join(''); return `<details class="id-old"><summary>Runde vom ${esc(fmt(r.date))}</summary>${roundTools(r)}${txt || '<p class="hint">Keine Texte in dieser Runde.</p>'}</details>`; }).join('')}</section>` : ''}
       ${current() && !(due() || {}).over ? `<p class="hint id-foot"><button class="btn ghost small" data-act="id-round">Neue Runde schon jetzt beginnen</button></p>` : ''}
     </div>`;
     $$('.id-ta', main).forEach(grow);
@@ -328,6 +331,13 @@
         });
       });
       main.addEventListener('focusout', ev => { if (ev.target.dataset && ev.target.dataset.k) flush(); });
+      main.addEventListener('change', ev => {
+        const id = ev.target.dataset && ev.target.dataset.roundDate; if (!id || !ev.target.value) return;
+        flush();
+        const r = items().find(x => x.id === id); if (!r || r.date === ev.target.value) return;
+        S.saveIdentity({ ...r, date: ev.target.value });
+        rerender();
+      });
       main.addEventListener('submit', ev => {
         const f = ev.target.closest('[data-act-form="id-vadd"]'); if (!f) return;
         ev.preventDefault();
@@ -343,6 +353,8 @@
   function newRound() {
     flush();
     const cur = current(); if (!cur) return;
+    const empty = !Object.values(answers(cur)).some(v => Array.isArray(v) ? v.length : v && typeof v === 'object' ? Object.keys(v).length : v);
+    if (cur.date === today() && empty) { alert('Heute wurde schon eine neue, noch leere Runde begonnen – keine zweite nötig.'); return; }
     if (!confirm('Neue 90-Tage-Runde beginnen? Alle Seiten starten wieder leer. Deine jetzige Runde bleibt unter „Frühere Runden“ erhalten.')) return;
     const id = 'r-' + today();
     S.saveIdentity({ id: rounds().some(r => r.id === id) ? id + '-' + Date.now().toString(36) : id, kind: 'round', date: today(), a: {} });
@@ -362,6 +374,15 @@
     'id-insp': el => change(a => { a['g.insp'] = toggle(a['g.insp'] || [], el.dataset.v, Infinity); }),
     'id-fwadd': () => change(a => { const l = a['g.fw'] && a['g.fw'].length ? a['g.fw'].slice() : [{}]; l.push({}); a['g.fw'] = l; }),
     'id-round': () => { newRound(); rerender(); },
+    'id-rdel': el => {
+      flush();
+      const r = items().find(x => x.id === el.dataset.id); if (!r) return;
+      const isCur = current() && current().id === r.id;
+      if (!confirm(`Runde vom ${fmt(r.date)} löschen? Alle Antworten dieser Runde gehen verloren.${isCur && rounds().length > 1 ? ' Danach ist die vorherige Runde wieder die aktuelle.' : ''}`)) return;
+      draft = null;
+      S.deleteIdentity(r.id);
+      rerender();
+    },
     'id-readmark': el => {
       const id = 'rd-' + today(), old = items().find(x => x.id === id) || { id, kind: 'read', date: today() };
       S.saveIdentity({ ...old, [el.dataset.w]: !old[el.dataset.w] }); rerender();
