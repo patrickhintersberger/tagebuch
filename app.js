@@ -875,10 +875,22 @@
       ${tips.length ? `<section class="memory bk-tips"><header>${ms('star')}<div><b>Passt dazu</b><span>Was sich mit deinen Plänen verbinden lässt</span></div></header>
         ${tips.map(t => `<div class="bk sug"><div><small>${esc(t.text)}</small></div>${t.id ? `<button class="btn small ghost" data-act="bk-plan-at" data-id="${esc(t.id)}" data-plan="${esc(t.plan)}">Mit einplanen</button>` : ''}</div>`).join('')}</section>` : ''}`;
   }
+  // Bilder aus dem Tagebuch vom Tag, an dem ein Ziel erledigt wurde
+  function dayPhotos(date) {
+    if (!date) return [];
+    return S.entries.filter(e => e.date === date).sort((x, y) => (x.time || '').localeCompare(y.time || '')).flatMap(e => (e.photos || []).map(p => ({ p, e })));
+  }
+  // Titelbild eines erledigten Ziels: selbst gewähltes Bild, sonst das erste Bild des Tages
+  function bkPhoto(b) {
+    const list = dayPhotos(b.done);
+    return list.find(x => x.p.id === b.photo) || list[0] || null;
+  }
   function bkRow(b) {
+    const ph = b.done ? bkPhoto(b) : null;
     return `<div class="bk ${b.done ? 'done' : ''}" data-act="bk-open" data-id="${esc(b.id)}" tabindex="0">
       <button class="hb-check" data-act="bk-toggle" data-id="${esc(b.id)}" aria-pressed="${!!b.done}" aria-label="Erledigt">${ms('check')}</button>
-      <div><b>${esc(b.title)}</b>${bkSub(b) ? `<small>${esc(bkSub(b))}</small>` : ''}${b.costNote ? `<small class="bk-note">${esc(b.costNote)}</small>` : ''}${bkTrip(b) ? `<small class="bk-trip">${TRIP_DAYS} Tage vor Ort inkl. Anreise: ca. ${eur(bkTrip(b))}</small>` : ''}${b.travel != null ? `<small class="bk-travel">${ms('luggage')}Anreise ab Deutschland: ${b.travel ? 'ca. ' + eur(b.travel) : 'keine'}${b.travelNote ? ' · ' + esc(b.travelNote) : ''}</small>` : ''}</div></div>`;
+      <div><b>${esc(b.title)}</b>${b.done ? `<label class="bk-doneat" data-act="bk-noop">${ms('event')}Erledigt am <span>${esc(parse(b.done).toLocaleDateString('de-DE', { day: 'numeric', month: 'short', year: 'numeric' }))}</span><input type="date" data-bkdate="${esc(b.id)}" value="${esc(b.done)}" aria-label="Erledigt am ändern"></label>` : ''}${bkSub(b) ? `<small>${esc(bkSub(b))}</small>` : ''}${b.costNote ? `<small class="bk-note">${esc(b.costNote)}</small>` : ''}${bkTrip(b) ? `<small class="bk-trip">${TRIP_DAYS} Tage vor Ort inkl. Anreise: ca. ${eur(bkTrip(b))}</small>` : ''}${b.travel != null ? `<small class="bk-travel">${ms('luggage')}Anreise ab Deutschland: ${b.travel ? 'ca. ' + eur(b.travel) : 'keine'}${b.travelNote ? ' · ' + esc(b.travelNote) : ''}</small>` : ''}</div>
+      ${ph ? `<button class="bk-photo" data-act="open" data-id="${esc(ph.e.id)}" aria-label="Tagebuch-Eintrag vom ${esc(fmtLong(b.done))} öffnen"><img data-thumb="${esc(ph.p.id)}" alt=""></button>` : ''}</div>`;
   }
   function viewBucket(main) {
     const all = S.bucket;
@@ -940,6 +952,7 @@
           <div id="bk-loc"></div>
           <div class="hb-f3"><label>Geplant für<input name="plan" type="month" value="${esc(d.plan || '')}"></label>
             ${b ? `<label>Erledigt am<input name="done" type="date" value="${esc(d.done || '')}"></label>` : ''}</div>
+          ${b ? `<input type="hidden" name="photo" value="${esc(d.photo || '')}"><div id="bk-photos"></div>` : ''}
           <div class="hb-f3"><label>Kosten vor Ort (€)<input name="cost" type="number" inputmode="decimal" min="0" value="${esc(d.cost == null ? '' : d.cost)}" placeholder="ohne Anreise"></label>
             <label>Gilt<select name="costPer"><option value="" ${d.costPer !== 'day' ? 'selected' : ''}>einmalig</option><option value="day" ${d.costPer === 'day' ? 'selected' : ''}>pro Tag</option></select></label></div>
           <input name="costNote" type="text" value="${esc(d.costNote || '')}" placeholder="Wofür genau, z.B. Tandemsprung pro Person">
@@ -949,6 +962,10 @@
           <div class="row-btns">${b ? `<button type="button" class="btn danger ghost" data-act="bk-delete" data-id="${esc(b.id)}">Löschen</button>` : ''}<button class="btn">Speichern</button></div>
         </form></section></div></div>`;
     bkLocBox();
+    if (b) {
+      bkPhotosBox();
+      $('#bk-form [name="done"]').addEventListener('change', () => { $('#bk-form [name="photo"]').value = ''; bkPhotosBox(); });
+    }
     $('#bk-form').addEventListener('submit', ev => {
       if (ev.submitter && ev.submitter.dataset.act) return;
       ev.preventDefault();
@@ -958,10 +975,20 @@
         cost: String(f.get('cost')).trim() === '' ? null : Math.max(0, parseFloat(String(f.get('cost')).replace(',', '.')) || 0), costPer: String(f.get('costPer') || ''), costNote: String(f.get('costNote')).trim(),
         travel: String(f.get('travel')).trim() === '' ? null : Math.max(0, parseFloat(String(f.get('travel')).replace(',', '.')) || 0), travelNote: String(f.get('travelNote')).trim(),
         dayRate: Math.max(0, parseFloat(String(f.get('dayRate')).replace(',', '.')) || 0) || null };
-      if (b) S.saveBucket({ ...b, ...base, title: String(f.get('title')).trim(), done: String(f.get('done') || '') });
+      if (b) S.saveBucket({ ...b, ...base, title: String(f.get('title')).trim(), done: String(f.get('done') || ''), photo: String(f.get('photo') || '') });
       else String(f.get('title')).split('\n').map(t => t.replace(/^[-*•\d.)\s]+/, '').trim()).filter(Boolean).forEach((title, i) => S.saveBucket({ ...base, title, done: '', createdAt: Date.now() + i }));
       closeSettings(); toast('Gespeichert');
     });
+  }
+  // Bild vom Erledigt-Tag wählen (ohne Wahl gilt das erste Bild des Tages)
+  function bkPhotosBox() {
+    const box = $('#bk-photos'); if (!box) return;
+    const date = $('#bk-form [name="done"]').value, cur = $('#bk-form [name="photo"]').value;
+    const list = dayPhotos(date);
+    const sel = (list.find(x => x.p.id === cur) || list[0] || {}).p;
+    box.innerHTML = !date ? '' : list.length
+      ? `<label>Bild vom Tag${list.length > 1 ? ' (antippen zum Wechseln)' : ''}</label><div class="bk-pick">${list.map(({ p }) => `<button type="button" data-act="bk-photo-pick" data-id="${esc(p.id)}" aria-pressed="${sel && sel.id === p.id}"><img data-thumb="${esc(p.id)}" alt=""></button>`).join('')}</div>`
+      : `<p class="hint">Im Tagebuch gibt es an diesem Tag noch kein Bild. Sobald du eins hinzufügst, erscheint es hier.</p>`;
   }
   function bkLocBox() {
     const box = $('#bk-loc'); if (!box) return;
@@ -2063,6 +2090,8 @@
     'hb-full': () => { const h = S.habit(hbEdit); if (!h) return; S.setLog(h.id, ui.hbDate > todayISO() ? todayISO() : ui.hbDate, h.target || 1); closeSettings(); },
     'bk-new': () => openBucket(null),
     'bk-open': el => openBucket(el.dataset.id),
+    'bk-noop': el => { const i = $('input', el); try { if (i && i.showPicker) i.showPicker(); } catch {} },
+    'bk-photo-pick': el => { $('#bk-form [name="photo"]').value = el.dataset.id; bkPhotosBox(); },
     'bk-toggle': el => { const b = S.bucketItem(el.dataset.id); if (b) S.saveBucket({ ...b, done: b.done ? '' : todayISO() }); },
     'bk-plan-at': el => { const b = S.bucketItem(el.dataset.id); if (!b) return; S.saveBucket({ ...b, plan: el.dataset.plan }); toast('Für ' + bkMonthName(el.dataset.plan) + ' eingeplant'); },
     'bk-plan': el => { const b = S.bucketItem(el.dataset.id); if (!b) return; S.saveBucket({ ...b, plan: todayISO().slice(0, 7) }); toast('Für diesen Monat eingeplant'); },
@@ -2156,6 +2185,10 @@
     if (!el) { if (ev.target.id === 'lightbox') closeLightbox(); return; }
     const fn = actions[el.dataset.act];
     if (fn) { if (el.tagName === 'BUTTON' && el.type !== 'submit') ev.preventDefault(); fn(el); }
+  });
+  document.addEventListener('change', ev => {
+    const id = ev.target.dataset && ev.target.dataset.bkdate; if (!id) return;
+    const b = S.bucketItem(id); if (b && ev.target.value) S.saveBucket({ ...b, done: ev.target.value, photo: '' });
   });
   document.addEventListener('mousedown', ev => { if (ev.target.closest('[data-keepfocus]')) ev.preventDefault(); });
   document.addEventListener('keydown', ev => {
