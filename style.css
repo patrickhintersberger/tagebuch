@@ -248,8 +248,8 @@ img.missing { opacity: .35; }
 .switch input { width: 20px; height: 20px; margin-top: 2px; accent-color: var(--accent); flex: none; }
 .status { display: flex; align-items: center; gap: 8px; font-size: 14.5px; margin: 4px 0 8px; }
 
-.lightbox { position: absolute; inset: 0; z-index: 2000; background: rgba(0,0,0,.92); display: grid; place-items: center; }
-.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.lightbox { position: absolute; inset: 0; z-index: 2000; background: rgba(0,0,0,.92); display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; overflow: hidden; }
+.lightbox img { max-width: 100%; max-height: 100%; width: auto; height: auto; min-height: 0; object-fit: contain; }
 .lightbox .icon-btn { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 10px); right: 10px; color: #fff; background: rgba(255,255,255,.15); }
 
 .toast { position: absolute; z-index: 3000; left: 50%; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 20px); transform: translate(-50%, 20px); background: #2a2d34; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 14px; max-width: min(92vw, 460px); opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; text-align: center; }
@@ -318,7 +318,7 @@ img.missing { opacity: .35; }
 .play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 34px; height: 34px; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff; display: grid; place-items: center; pointer-events: none; }
 .play .ms { font-size: 24px; }
 .att-grid button { position: relative; }
-.lightbox video { max-width: 100%; max-height: 100%; background: #000; }
+.lightbox video { max-width: 100%; max-height: 100%; min-height: 0; background: #000; }
 /* Leaflet setzt für Bilder in Markern eigene Breiten; hier bewusst überschreiben */
 .leaflet-container .leaflet-marker-pane .pin img { width: 100% !important; height: 100% !important; max-width: 100% !important; }
 .cal-head { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
