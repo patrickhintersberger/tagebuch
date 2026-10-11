@@ -767,3 +767,5 @@ img.missing { opacity: .35; }
 .fin-paste { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); padding: 10px 12px; font: inherit; font-size: 15px; }
 .fin-assets .row-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .fin-asset select { height: 40px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); padding: 0 8px; font-size: 15px; }
+.fin-taxset { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--ink-2); }
+.fin-tax.wide { width: 110px; }
