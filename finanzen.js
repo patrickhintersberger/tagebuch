@@ -446,9 +446,11 @@
 
   // ---------- Steuern ----------
   // Einkommensteuer nach Tarif 2026 (§ 32a EStG), Soli, Kirchensteuer (Bayern 8 %) und Gewerbesteuer mit Anrechnung (§ 35 EStG).
-  // Vereinfacht: zu versteuerndes Einkommen = Gewinn + Mietgewinn − Abzüge (Vorsorge usw.), Gewerbeertrag = Gewinn.
+  // Einzelunternehmer: zu versteuerndes Einkommen = Gewinn + Mieteinkünfte − Abzüge (Vorsorge usw.), Gewerbeertrag = Gewinn.
+  // Mieteinkünfte: eigener Wert, sonst die festen Einnahmen der Liste × 12 (bzw. „Vermietung“ der letzten 12 Monate).
   // Einstellungen synchronisiert in fmeta {id: 'tax-settings'}; Beträge in Cent pro Jahr.
-  const TAX_DEFAULT = { auto: true, splitting: false, hebesatz: 400, kirche: false, mietgewinn: 0, abzuege: 0 };
+  // Standard: ledig, ohne Kirchensteuer, Hebesatz Mering 360 % (wie im CRM), private Krankenversicherung 299,16 € im Monat.
+  const TAX_DEFAULT = { auto: true, splitting: false, hebesatz: 360, kirche: false, mietgewinn: null, abzuege: 29916 * 12 };
   const taxSettings = () => ({ ...TAX_DEFAULT, ...(S.fmeta.find(m => m.id === 'tax-settings') || {}) });
   function estTarif(x) { // Euro, ganzzahlig abgerundet
     x = Math.floor(Math.max(0, x));
@@ -472,7 +474,7 @@
     const soli = est <= frei ? 0 : Math.min(est * 0.055, (est - frei) * 0.119);
     const kist = ts.kirche ? est0 * 0.08 : 0;
     const total = est + soli + kist + gewst;
-    return { profit: profit * 100, zve: zve * 100, est: est * 100, soli: soli * 100, kist: kist * 100, gewst: gewst * 100, anr: anr * 100, total: total * 100, rate: profit > 0 ? total / profit : 0 };
+    return { profit: profit * 100, zve: zve * 100, est: est * 100, soli: soli * 100, kist: kist * 100, gewst: gewst * 100, anr: anr * 100, total: total * 100, rate: zve > 0 ? total / zve : 0 };
   }
   /** Gewinn der letzten 12 vollen Monate: Umsatz ohne USt − geschäftliche Ausgaben (ohne Steuerzahlungen) */
   function profitLast12(counted) {
@@ -482,7 +484,8 @@
     const revenue = counted.filter(t => inM(t) && t.cat === REVENUE_CAT).reduce((s, t) => s + t.amount, 0) / (1 + UST_RATE);
     const costs = -counted.filter(t => inM(t) && t.g === 'biz' && t.cat !== 'Steuer').reduce((s, t) => s + t.amount, 0);
     const scale = months.length ? 12 / months.length : 0; // weniger als 12 Monate: hochgerechnet
-    return { months, revenue: revenue * scale, costs: costs * scale, profit: (revenue - costs) * scale };
+    const rent = counted.filter(t => inM(t) && t.cat === 'Vermietung').reduce((s, t) => s + t.amount, 0) * scale;
+    return { months, revenue: revenue * scale, costs: costs * scale, profit: (revenue - costs) * scale, rent };
   }
 
   /** Was im Monat nötig ist, damit die Standard-Ausgaben gedeckt sind (Steuern nur auf den Gewinn) */
@@ -612,9 +615,12 @@
     </tbody></table></div>`;
     const top = Object.entries(f.byCat).filter(([, v]) => v < 0).sort((a, b) => a[1] - b[1]).slice(0, 5);
     const plans = planEntries().sort((a, b) => a.date.localeCompare(b.date));
-    const ts = taxSettings();
-    const need = needed(f.budgets, fc.tax / 100, fc.save, ts);
     const p12 = profitLast12(counted);
+    const ts0 = taxSettings();
+    const listRent = f.budgets.filter(b => b.g === 'in').reduce((s, b) => s + perMonth(b), 0) * 12;
+    const rentAuto = listRent || p12.rent;
+    const ts = { ...ts0, mietgewinn: ts0.mietgewinn == null ? rentAuto : ts0.mietgewinn };
+    const need = needed(f.budgets, fc.tax / 100, fc.save, ts);
     const t12 = taxesFor(p12.profit, ts);
     const pct = v => `${(v * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} %`;
     const taxDetail = t => [`ESt ${eur0(t.est / 12)}`, t.gewst ? `GewSt ${eur0(t.gewst / 12)}` : '', t.soli ? `Soli ${eur0(t.soli / 12)}` : '', t.kist ? `KiSt ${eur0(t.kist / 12)}` : ''].filter(Boolean).join(' · ');
@@ -628,23 +634,24 @@
         <div><span>Als Rechnungsbetrag</span><b>${eur0(need.brutto)}</b><small>inkl. ${Math.round(UST_RATE * 100)} % Umsatzsteuer</small></div>
         <div><span>Ø Umsatz zuletzt</span><b class="${gap >= 0 ? 'ok' : 'bad'}">${eur0(f.revenue)}</b><small>${gap >= 0 ? `${eur0(gap)} über dem Nötigen` : `${eur0(-gap)} fehlen im Monat`}</small></div>
       </section>
-      <p class="hint">Vierteljährliche und jährliche Posten sind auf den Monat umgerechnet. Feste Einnahmen wie Miete decken einen Teil der privaten Ausgaben, der Rest muss als Gewinn aus dem Geschäft kommen. ${need.taxes ? `Steuern nach Tarif 2026 auf diesen Gewinn${ts.mietgewinn ? ' plus Mietgewinn' : ''}${ts.abzuege ? ' minus Abzüge' : ''}, Gewerbesteuer mit Hebesatz ${ts.hebesatz} % und Anrechnung auf die Einkommensteuer.` : 'Die Steuer rechnet mit dem festen Satz auf den Gewinn (Umsatz minus geschäftliche Ausgaben).'} Sparen zählt ${fc.save ? 'mit' : 'nicht mit'}.</p>
+      <p class="hint">Vierteljährliche und jährliche Posten sind auf den Monat umgerechnet. Feste Einnahmen wie Miete decken einen Teil der privaten Ausgaben, der Rest muss als Gewinn aus dem Geschäft kommen. ${need.taxes ? `Steuern nach Tarif 2026 auf diesen Gewinn${ts.mietgewinn ? ' plus Mieteinkünfte' : ''}${ts.abzuege ? ' minus Abzüge' : ''}, Gewerbesteuer mit Hebesatz ${ts.hebesatz} % und Anrechnung auf die Einkommensteuer.` : 'Die Steuer rechnet mit dem festen Satz auf den Gewinn (Umsatz minus geschäftliche Ausgaben).'} Sparen zählt ${fc.save ? 'mit' : 'nicht mit'}.</p>
       <h2 class="ct-h">Steuern aus deinen Zahlen</h2>
       <section class="fin-kpis">
         <div><span>Gewinn letzte 12 Monate</span><b>${eur0(p12.profit)}</b><small>Umsatz ohne USt ${eur0(p12.revenue)} − Ausgaben ${eur0(p12.costs)}${p12.months.length && p12.months.length < 12 ? ` · aus ${p12.months.length} Monaten hochgerechnet` : ''}</small></div>
+        <div><span>Zu versteuern</span><b>${eur0(t12.zve)}</b><small>Gewinn + Mieteinkünfte ${eur0(ts.mietgewinn)} − Abzüge ${eur0(ts.abzuege)}</small></div>
         <div><span>Einkommensteuer</span><b>${eur0(t12.est + t12.soli + t12.kist)}</b><small>im Jahr${t12.soli ? ` · inkl. Soli ${eur0(t12.soli)}` : ''}${t12.kist ? ` · KiSt ${eur0(t12.kist)}` : ''}${t12.anr ? ` · nach Anrechnung GewSt ${eur0(t12.anr)}` : ''}</small></div>
         <div><span>Gewerbesteuer</span><b>${eur0(t12.gewst)}</b><small>im Jahr · Hebesatz ${ts.hebesatz} %, Freibetrag 24.500 €</small></div>
-        <div><span>Steuern gesamt</span><b>${eur0(t12.total)}</b><small>Ø ${pct(t12.rate)} vom Gewinn</small></div>
+        <div><span>Steuern gesamt</span><b>${eur0(t12.total)}</b><small>Ø ${pct(t12.rate)} vom zu versteuernden Einkommen</small></div>
         <div><span>Rücklage pro Monat</span><b>${eur0(t12.total / 12)}</b><small>dazu Umsatzsteuer, die du ohnehin abführst</small></div>
       </section>
       <details class="set fin-assets"${ui.taxOpen ? ' open' : ''}><summary data-fin="tax-toggle">Steuer-Einstellungen</summary>
-        <p class="hint">Grobe Schätzung, ersetzt nicht den Steuerberater: Der Gewinn kommt aus deinen Buchungen (Umsatz aus „${REVENUE_CAT}“ ohne Umsatzsteuer, minus geschäftliche Ausgaben ohne Steuerzahlungen). Abzüge wie Kranken- und Rentenversicherung senken das zu versteuernde Einkommen; den Mietgewinn (Mieten minus Zinsen, Abschreibung, Kosten) bekommst du aus der letzten Steuererklärung.</p>
+        <p class="hint">Grobe Schätzung, ersetzt nicht den Steuerberater: Der Gewinn kommt aus deinen Buchungen (Umsatz aus „${REVENUE_CAT}“ ohne Umsatzsteuer, minus geschäftliche Ausgaben ohne Steuerzahlungen). Als Einzelunternehmer zählen alle Einkünfte zusammen: Ohne eigenen Wert rechnet Daily die Mieten voll (${eur0(rentAuto)} im Jahr); Zinsen und Abschreibung senken sie, den genauen Wert hat die Anlage V der letzten Steuererklärung. Abzüge wie die private Krankenversicherung senken das zu versteuernde Einkommen.</p>
         <div class="fin-taxset">
           <label class="fin-count"><input type="checkbox" data-t="auto" ${ts.auto ? 'checked' : ''}> automatisch nach Tarif rechnen (sonst fester Satz ${fc.tax} %)</label>
           <label class="fin-count"><input type="checkbox" data-t="splitting" ${ts.splitting ? 'checked' : ''}> verheiratet, Zusammenveranlagung (Splitting)</label>
           <label class="fin-count"><input type="checkbox" data-t="kirche" ${ts.kirche ? 'checked' : ''}> Kirchensteuer (8 %)</label>
           <label>Hebesatz Gewerbesteuer <input type="number" min="0" max="900" step="5" value="${ts.hebesatz}" data-t="hebesatz" class="fin-tax"> %</label>
-          <label>Mietgewinn pro Jahr <input type="text" inputmode="decimal" value="${ts.mietgewinn ? (ts.mietgewinn / 100).toLocaleString('de-DE') : ''}" placeholder="0" data-t="mietgewinn" class="fin-tax wide"> €</label>
+          <label>Mieteinkünfte pro Jahr <input type="text" inputmode="decimal" value="${ts0.mietgewinn == null ? '' : (ts0.mietgewinn / 100).toLocaleString('de-DE')}" placeholder="${(rentAuto / 100).toLocaleString('de-DE', { maximumFractionDigits: 0 })} (Mieten voll)" data-t="mietgewinn" class="fin-tax wide"> €</label>
           <label>Abzüge pro Jahr <input type="text" inputmode="decimal" value="${ts.abzuege ? (ts.abzuege / 100).toLocaleString('de-DE') : ''}" placeholder="0" data-t="abzuege" class="fin-tax wide"> €</label>
           <button class="btn small" data-fin="tax-save">Speichern</button>
         </div>
@@ -889,7 +896,7 @@
       ui.taxOpen = true;
       ui.msg = 'Steuer-Einstellungen gespeichert.';
       S.saveFmeta({ ...(S.fmeta.find(m => m.id === 'tax-settings') || {}), id: 'tax-settings', type: 'setting', auto: v('auto').checked, splitting: v('splitting').checked, kirche: v('kirche').checked,
-        hebesatz: Math.max(0, +v('hebesatz').value || 0), mietgewinn: parseEuro(v('mietgewinn').value) || 0, abzuege: Math.abs(parseEuro(v('abzuege').value) || 0) });
+        hebesatz: Math.max(0, +v('hebesatz').value || 0), mietgewinn: v('mietgewinn').value.trim() ? parseEuro(v('mietgewinn').value) || 0 : null, abzuege: Math.abs(parseEuro(v('abzuege').value) || 0) });
     }
     else if (a === 'fc-mode') { const fc = loadFc(); fc.mode = b.dataset.v; saveFc(fc); rerender(); }
     else if (a === 'budget-add' || a === 'budget-save') {
