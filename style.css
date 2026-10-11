@@ -763,3 +763,7 @@ img.missing { opacity: .35; }
 .fin-grid.fin-zero { stroke: var(--ink-3); }
 .fin-chip-label { color: var(--ink-2); font-size: 13px; align-self: center; margin-right: 4px; }
 .fin-fc-save { display: inline-flex; gap: 8px; align-items: center; font-size: 14px; color: var(--ink-2); margin: 4px 0 8px; }
+.fin-tax { width: 56px; height: 28px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 0 6px; font-size: 14px; }
+.fin-paste { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); padding: 10px 12px; font: inherit; font-size: 15px; }
+.fin-assets .row-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.fin-asset select { height: 40px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); padding: 0 8px; font-size: 15px; }

@@ -419,7 +419,8 @@
   // Immobilie (über Kredit) und Umbuchungen zählen nicht. Geplante Posten: fmeta {type: 'plan', name, amount, date, every}.
   const EVERY = { once: ['einmalig', 0], month: ['monatlich', 1], quarter: ['vierteljährlich', 3], year: ['jährlich', 12] };
   const planEntries = () => S.fmeta.filter(m => m.type === 'plan' && m.name && m.date);
-  const loadFc = () => { try { return { h: 6, b: 6, save: true, ...JSON.parse(localStorage.getItem('fin-forecast')) }; } catch { return { h: 6, b: 6, save: true }; } };
+  const FC_DEFAULT = { h: 6, b: 6, save: true, mode: 'list', tax: 30 };
+  const loadFc = () => { try { return { ...FC_DEFAULT, ...JSON.parse(localStorage.getItem('fin-forecast')) }; } catch { return { ...FC_DEFAULT }; } };
   const saveFc = v => { try { localStorage.setItem('fin-forecast', JSON.stringify(v)); } catch { /* egal */ } };
   const addMonthsKey = (key, n) => { const d = new Date(Date.UTC(+key.slice(0, 4), +key.slice(5, 7) - 1 + n, 1)); return d.toISOString().slice(0, 7); };
   const monthLabel = key => `${MONTHS[+key.slice(5, 7) - 1]} ${key.slice(2, 4)}`;
@@ -433,6 +434,42 @@
     if (every === 0 ? diff !== 0 : diff % every !== 0) return 0;
     const day = `${key}-${p.date.slice(8, 10)}`;
     return day >= today ? 1 : 0;
+  }
+
+  // Standard-Ausgaben: fmeta {type: 'budget', name, amount (Cent, positiv), g: out|biz|save, every: month|quarter|year, date}.
+  // Vierteljährliche und jährliche Posten fallen im Monat ihres Datums an (und dann alle 3 bzw. 12 Monate).
+  const BUDGET_G = [['out', 'privat'], ['biz', 'geschäftlich'], ['save', 'Sparen & Anlegen']];
+  const budgetEntries = () => S.fmeta.filter(m => m.type === 'budget' && m.name);
+  const perMonth = b => b.amount / ((EVERY[b.every] || EVERY.month)[1] || 1);
+
+  /** Was im Monat nötig ist, damit die Standard-Ausgaben gedeckt sind (Einkommensteuer nur auf den Gewinn) */
+  function needed(budgets, taxRate, withSave) {
+    const sum = g => budgets.filter(b => b.g === g).reduce((s, b) => s + perMonth(b), 0);
+    const priv = sum('out') + (withSave ? sum('save') : 0), biz = sum('biz');
+    const profit = priv / (1 - taxRate); // Gewinn vor Einkommensteuer, damit privat genug übrig bleibt
+    const netto = profit + biz;
+    return { priv, biz, save: withSave ? sum('save') : 0, total: priv + biz, profit, tax: profit - priv, netto, brutto: netto * (1 + UST_RATE) };
+  }
+
+  /** „Warmmiete 1.250“, „Adobe 65 geschäftlich“, „KFZ-Versicherung 480 jährlich“, „Depot 500 sparen“ */
+  function parseBudgetLines(text) {
+    const out = [];
+    for (const raw of String(text || '').split(/\n/)) {
+      const line = raw.trim();
+      if (!line) continue;
+      const nums = line.match(/-?\d[\d.]*(,\d+)?/g);
+      if (!nums) continue;
+      const amount = parseEuro(nums[nums.length - 1]);
+      if (!amount) continue;
+      const low = line.toLowerCase();
+      const g = /geschäft|geschaeft|business|firma/.test(low) ? 'biz' : /spar|depot|anlegen|etf/.test(low) ? 'save' : 'out';
+      const every = /viertel|quartal/.test(low) ? 'quarter' : /jähr|jaehr|jahr/.test(low) ? 'year' : 'month';
+      const name = line.replace(nums[nums.length - 1], ' ')
+        .replace(/\b(geschäftlich|geschaeftlich|business|firma|privat|sparen|anlegen|monatlich|vierteljährlich|quartalsweise|jährlich|jaehrlich|pro monat|im monat|im jahr|pro jahr)\b/gi, ' ')
+        .replace(/€|eur\b/gi, ' ').replace(/[;:|\t]+/g, ' ').replace(/\s+[-–]\s*$/, '').replace(/\s+/g, ' ').trim();
+      if (name) out.push({ name, amount: Math.abs(amount), g, every });
+    }
+    return out;
   }
 
   function forecast(counted, index, meta, fc) {
@@ -451,7 +488,9 @@
       byCat[t.cat] = (byCat[t.cat] || 0) + t.amount / n;
     }
     if (!fc.save) avg.save = 0;
-    const net = avg.in + avg.out + avg.biz + avg.save;
+    const budgets = budgetEntries();
+    const useList = fc.mode !== 'avg' && budgets.length > 0;
+    const ust = Math.max(0, (byCat['Gehalt vom Hauptjob'] || 0) * UST_RATE / (1 + UST_RATE));
     // laufender Monat nur noch anteilig (Rest des Monats)
     const dim = new Date(+cur.slice(0, 4), +cur.slice(5, 7), 0).getDate();
     const rest = (dim - +today.slice(8, 10)) / dim;
@@ -463,11 +502,21 @@
       const f = i === 0 ? rest : 1;
       const items = plans.filter(p => planHits(p, key, today)).map(p => ({ name: p.name, amount: p.amount }));
       const planned = items.reduce((s, p) => s + p.amount, 0);
-      const r = { key, in: avg.in * f, out: (avg.out + avg.biz) * f, save: avg.save * f, planned, items };
+      let out = (avg.out + avg.biz) * f, save = avg.save * f;
+      if (useList) {
+        // monatliche Posten anteilig, seltenere im Monat ihres Datums
+        const hit = b => (b.every === 'month' || !b.date ? f : planHits(b, key, today));
+        // Umsatzsteuer in den Geschäftseinnahmen geht weiter ans Finanzamt, auch wenn sie nicht in der Liste steht
+        out = -budgets.filter(b => b.g !== 'save').reduce((s, b) => s + b.amount * hit(b), 0) - ust * f;
+        save = fc.save ? -budgets.filter(b => b.g === 'save').reduce((s, b) => s + b.amount * hit(b), 0) : 0;
+      }
+      const r = { key, in: avg.in * f, out, save, planned, items };
       bal += r.in + r.out + r.save + planned;
       rows.push({ ...r, end: Math.round(bal) });
     }
-    return { start: w.liquid, tax: w.tax, stand, basis, avg, net, byCat, rows };
+    const full = rows.slice(1);
+    const net = full.length ? full.reduce((s, r) => s + r.in + r.out + r.save, 0) / full.length : 0;
+    return { start: w.liquid, tax: w.tax, stand, basis, avg, net, byCat, rows, useList, budgets, ust };
   }
 
   function forecastChart(f) {
@@ -509,21 +558,63 @@
     </tbody></table></div>`;
     const top = Object.entries(f.byCat).filter(([, v]) => v < 0).sort((a, b) => a[1] - b[1]).slice(0, 5);
     const plans = planEntries().sort((a, b) => a.date.localeCompare(b.date));
+    const need = needed(f.budgets, fc.tax / 100, fc.save);
+    const gap = f.avg.in - need.brutto;
+    const modeChips = `<div class="chips"><span class="fin-chip-label">Ausgaben aus</span><button class="chip" aria-pressed="${f.useList}" data-fin="fc-mode" data-v="list">meiner Liste${f.budgets.length ? '' : ' (leer)'}</button><button class="chip" aria-pressed="${!f.useList}" data-fin="fc-mode" data-v="avg">Durchschnitt</button></div>`;
+    const earn = f.budgets.length ? `<h2 class="ct-h">Was du im Monat verdienen musst</h2>
+      <section class="fin-kpis">
+        <div><span>Ausgaben laut Liste</span><b>${eur0(need.total)}</b><small>privat ${eur0(need.priv - need.save)}${need.save ? ` · Sparen ${eur0(need.save)}` : ''} · geschäftlich ${eur0(need.biz)}</small></div>
+        <div><span>Einkommensteuer</span><b>${eur0(need.tax)}</b><small><label>Satz <input type="number" min="0" max="60" step="1" value="${fc.tax}" data-fin="fc-tax" class="fin-tax" aria-label="Steuersatz in Prozent"> % auf den Gewinn</label></small></div>
+        <div><span>Nötiger Umsatz netto</span><b>${eur0(need.netto)}</b><small>Gewinn ${eur0(need.profit)} + geschäftliche Ausgaben</small></div>
+        <div><span>Als Rechnungsbetrag</span><b>${eur0(need.brutto)}</b><small>inkl. ${Math.round(UST_RATE * 100)} % Umsatzsteuer</small></div>
+        <div><span>Ø Einnahmen zuletzt</span><b class="${gap >= 0 ? 'ok' : 'bad'}">${eur0(f.avg.in)}</b><small>${gap >= 0 ? `${eur0(gap)} über dem Nötigen` : `${eur0(-gap)} fehlen im Monat`}</small></div>
+      </section>
+      <p class="hint">Vierteljährliche und jährliche Posten sind auf den Monat umgerechnet. Die Einkommensteuer rechnet nur auf den Gewinn (Umsatz minus geschäftliche Ausgaben); Sparen zählt ${fc.save ? 'mit' : 'nicht mit'}.</p>` : '';
+    const bRow = b => `<div class="fin-asset" data-id="${esc(b.id)}">
+        <input type="text" data-k="name" value="${esc(b.name)}" aria-label="Name">
+        <input type="text" inputmode="decimal" data-k="amount" value="${(b.amount / 100).toLocaleString('de-DE')}" aria-label="Betrag für ${esc(b.name)}">
+        <select data-k="g" aria-label="Art">${BUDGET_G.map(([g, l]) => `<option value="${g}"${b.g === g ? ' selected' : ''}>${l}</option>`).join('')}</select>
+        <select data-k="every" aria-label="Rhythmus">${['month', 'quarter', 'year'].map(k => `<option value="${k}"${(b.every || 'month') === k ? ' selected' : ''}>${EVERY[k][0]}</option>`).join('')}</select>
+        <input type="date" data-k="date" value="${esc(b.date || '')}" aria-label="Nächste Fälligkeit" title="Bei vierteljährlich und jährlich: wann fällig">
+        <span class="fin-acts"><button class="btn small" data-fin="budget-save">Speichern</button>
+        <button class="icon-btn" data-fin="budget-del" data-id="${esc(b.id)}" aria-label="${esc(b.name)} löschen">${ms('delete')}</button></span></div>`;
+    const budgetForm = `<details class="set fin-assets"${ui.budgetOpen ? ' open' : ''}><summary data-fin="budget-toggle">Standard-Ausgaben pro Monat (${f.budgets.length}${f.budgets.length ? ` · ${eur0(f.budgets.reduce((t, b) => t + perMonth(b), 0))} im Monat` : ''})</summary>
+        <p class="hint">Deine feste Monatsliste: Miete, Versicherungen, Lebensmittel, Software usw. Beträge ohne Minus. Bei vierteljährlich und jährlich das Datum der nächsten Zahlung eintragen. Einkommensteuer-Vorauszahlungen als vierteljährlichen Posten „geschäftlich“ eintragen; die Umsatzsteuer rechnet die Vorschau selbst.</p>
+        ${BUDGET_G.map(([g, l]) => { const list = f.budgets.filter(b => b.g === g).sort((a, b) => b.amount - a.amount); return list.length ? `<h3 class="fin-sub">${l} · ${eur0(list.reduce((s, b) => s + perMonth(b), 0))} im Monat</h3><div class="list">${list.map(bRow).join('')}</div>` : ''; }).join('')}
+        <h3 class="fin-sub">Neuer Posten</h3>
+        <div class="list"><div class="fin-asset fin-asset-new">
+          <input type="text" placeholder="z. B. Warmmiete" aria-label="Name" data-k="name">
+          <input type="text" inputmode="decimal" placeholder="Betrag" aria-label="Betrag" data-k="amount">
+          <select data-k="g" aria-label="Art">${BUDGET_G.map(([g, l]) => `<option value="${g}">${l}</option>`).join('')}</select>
+          <select data-k="every" aria-label="Rhythmus">${['month', 'quarter', 'year'].map(k => `<option value="${k}">${EVERY[k][0]}</option>`).join('')}</select>
+          <input type="date" data-k="date" aria-label="Nächste Fälligkeit">
+          <button class="btn small" data-fin="budget-add">Hinzufügen</button>
+        </div></div>
+        <h3 class="fin-sub">Liste einfügen</h3>
+        <p class="hint">Eine Zeile pro Posten, z. B. „Warmmiete 1.250“, „Adobe 65 geschäftlich“, „KFZ-Versicherung 480 jährlich“ oder „Depot 500 sparen“. Gleiche Namen werden überschrieben.</p>
+        <textarea class="fin-paste" rows="5" data-k="paste" aria-label="Liste einfügen" placeholder="Warmmiete 1.250&#10;Lebensmittel 600&#10;Adobe 65 geschäftlich&#10;KFZ-Versicherung 480 jährlich"></textarea>
+        <div class="row-btns"><button class="btn small" data-fin="budget-paste">Übernehmen</button>
+        ${f.budgets.length ? '' : `<button class="btn small ghost" data-fin="budget-suggest">Aus den letzten Monaten vorschlagen</button>`}</div>
+      </details>`;
     return `<h2 class="ct-h">Vorschau · nächste ${fc.h} Monate</h2>
       ${low.end < 0 ? `<p class="fin-msg">${ms('warning')} Im ${MONTHS_LONG[+low.key.slice(5, 7) - 1]} ${low.key.slice(0, 4)} wären die Konten bei ${eur0(low.end)}.</p>` : ''}
       <section class="fin-kpis">
         <div><span>Konten heute</span><b>${eur0(f.start)}</b><small>${f.stand ? `Kontostand vom ${new Date(f.stand).toLocaleDateString('de-DE')}${old ? ' · neu einlesen' : ''}` : ''}</small></div>
-        <div><span>Ø pro Monat</span><b class="${f.net >= 0 ? 'ok' : 'bad'}">${sign(f.net)}</b><small>aus ${f.basis.length ? `${monthLabel(f.basis[0])} – ${monthLabel(f.basis[f.basis.length - 1])}` : 'keinen Monaten'}</small></div>
+        <div><span>Ø pro Monat</span><b class="${f.net >= 0 ? 'ok' : 'bad'}">${sign(f.net)}</b><small>${f.useList ? 'Einnahmen Ø, Ausgaben laut Liste' : `aus ${f.basis.length ? `${monthLabel(f.basis[0])} – ${monthLabel(f.basis[f.basis.length - 1])}` : 'keinen Monaten'}`}</small></div>
         <div><span>Geplante Posten</span><b>${sign(f.rows.reduce((s, r) => s + r.planned, 0))}</b><small>${plans.length} eingetragen</small></div>
         <div><span>Tiefster Stand</span><b class="${low.end >= 0 ? 'ok' : 'bad'}">${eur0(low.end)}</b><small>Ende ${MONTHS_LONG[+low.key.slice(5, 7) - 1]}</small></div>
         <div><span>In ${fc.h} Monaten</span><b class="${last.end >= 0 ? 'ok' : 'bad'}">${eur0(last.end)}</b><small>${sign(last.end - f.start)} gegenüber heute${f.tax ? ` · Steuerkonto heute ${eur0(f.tax)}` : ''}</small></div>
       </section>
+      ${modeChips}
       ${chips('h', [3, 6, 12], 'Zeitraum')}
       ${chips('b', [3, 6, 12], 'Ø aus den letzten')}
       <label class="fin-count fin-fc-save"><input type="checkbox" data-fin="fc-save" ${fc.save ? 'checked' : ''}> Sparen & Anlegen als Abfluss rechnen</label>
       ${forecastChart(f)}
       ${table}
-      <p class="hint">Rechnet mit dem Durchschnitt je Monat: Einnahmen ${eur0(f.avg.in)}, Ausgaben privat ${eur0(-f.avg.out)}, geschäftlich ${eur0(-f.avg.biz)}${fc.save ? `, Sparen ${eur0(-f.avg.save)}` : ''}.${top.length ? ` Größte Posten: ${top.map(([c, v]) => `${esc(c)} ${eur0(-v)}`).join(', ')}.` : ''} Einmalige Sachen wie Urlaub, Steuernachzahlung oder eine Anschaffung trägst du unten ein.</p>
+      <p class="hint">${f.useList
+        ? `Einnahmen aus dem Durchschnitt (${eur0(f.avg.in)} im Monat), Ausgaben aus deiner Liste${f.ust ? ` plus Umsatzsteuer ans Finanzamt (Ø ${eur0(f.ust)})` : ''}.`
+        : `Rechnet mit dem Durchschnitt je Monat: Einnahmen ${eur0(f.avg.in)}, Ausgaben privat ${eur0(-f.avg.out)}, geschäftlich ${eur0(-f.avg.biz)}${fc.save ? `, Sparen ${eur0(-f.avg.save)}` : ''}.${top.length ? ` Größte Posten: ${top.map(([c, v]) => `${esc(c)} ${eur0(-v)}`).join(', ')}.` : ''}`} Einmalige Sachen wie Urlaub, Steuernachzahlung oder eine Anschaffung trägst du unten ein.</p>
+      ${budgetForm}
       <details class="set fin-assets"${ui.plansOpen ? ' open' : ''}><summary data-fin="plans-toggle">Geplante Posten (${plans.length})</summary>
         <p class="hint">Ausgaben mit Minus, Einnahmen ohne. Wiederkehrende Posten laufen ab dem Datum weiter.</p>
         <div class="list">${plans.map(p => `<div class="fin-asset"><div class="fin-name"><b>${esc(p.name)}</b><small>${new Date(p.date).toLocaleDateString('de-DE')} · ${(EVERY[p.every] || EVERY.once)[0]}</small></div>
@@ -536,7 +627,8 @@
             <select data-k="every" aria-label="Rhythmus">${Object.entries(EVERY).map(([k, [l]]) => `<option value="${k}">${l}</option>`).join('')}</select>
             <button class="btn small" data-fin="plan-add">Hinzufügen</button>
           </div></div>
-      </details>`;
+      </details>
+      ${earn}`;
   }
 
   function assetForm(index, meta) {
@@ -582,7 +674,7 @@
   }
 
   // ---------- Auswertung ----------
-  const ui = { year: String(new Date().getFullYear()), month: null, filter: 'open', msg: '', busy: false, assetsOpen: false, plansOpen: false };
+  const ui = { year: String(new Date().getFullYear()), month: null, filter: 'open', msg: '', busy: false, assetsOpen: false, plansOpen: false, budgetOpen: false };
 
   function enriched() {
     return S.finance.map(t => {
@@ -710,6 +802,45 @@
     } else if (a === 'rule-del') S.deleteFmeta(b.dataset.id);
     else if (a === 'assets-toggle') ui.assetsOpen = !b.closest('details').open;
     else if (a === 'plans-toggle') ui.plansOpen = !b.closest('details').open;
+    else if (a === 'budget-toggle') ui.budgetOpen = !b.closest('details').open;
+    else if (a === 'fc-mode') { const fc = loadFc(); fc.mode = b.dataset.v; saveFc(fc); rerender(); }
+    else if (a === 'budget-add' || a === 'budget-save') {
+      const row = b.closest('.fin-asset');
+      const field = k => row.querySelector(`[data-k="${k}"]`);
+      const name = field('name').value.trim();
+      const amount = parseEuro(field('amount').value);
+      const every = field('every').value;
+      const date = field('date').value;
+      ui.budgetOpen = true;
+      if (!name || !amount) { ui.msg = 'Bitte Name und Betrag eintragen.'; rerender(); return; }
+      if (every !== 'month' && !date) { ui.msg = 'Bei vierteljährlich und jährlich bitte das Datum der nächsten Zahlung eintragen.'; rerender(); return; }
+      const old = a === 'budget-save' ? budgetEntries().find(x => x.id === row.dataset.id) : null;
+      ui.msg = `${name}: ${eur0(Math.abs(amount))} ${EVERY[every][0]} gespeichert.`;
+      S.saveFmeta({ ...(old || {}), type: 'budget', name, amount: Math.abs(amount), g: field('g').value, every, date: every === 'month' ? '' : date });
+    } else if (a === 'budget-del') { ui.budgetOpen = true; S.deleteFmeta(b.dataset.id); }
+    else if (a === 'budget-paste') {
+      const items = parseBudgetLines(b.closest('details').querySelector('[data-k="paste"]').value);
+      ui.budgetOpen = true;
+      if (!items.length) { ui.msg = 'Keine Zeile erkannt. Format: Name und Betrag, z. B. „Warmmiete 1.250“.'; rerender(); return; }
+      const byName = new Map(budgetEntries().map(x => [norm(x.name), x]));
+      // jährliche/vierteljährliche ohne Datum: ab nächstem Monat
+      const next = addMonthsKey(todayISO().slice(0, 7), 1) + '-01';
+      items.forEach(it => { const old = byName.get(norm(it.name)); S.saveFmeta({ ...(old || {}), type: 'budget', ...it, date: it.every === 'month' ? '' : (old && old.date) || next }); });
+      const undated = items.filter(it => it.every !== 'month').length;
+      ui.msg = `${items.length} Posten übernommen${undated ? ` – bei ${undated} seltenen Posten bitte das Datum der nächsten Zahlung prüfen` : ''}.`;
+    } else if (a === 'budget-suggest') {
+      // Vorschlag aus dem Ø der letzten Monate je Kategorie, gerundet auf 10 €
+      const all = enriched();
+      const tx = all.filter(t => t.kind !== 'summary'), sums = all.filter(t => t.kind === 'summary');
+      const nm = new Set(sums.map(t => t.date.slice(0, 7)));
+      const f = forecast([...sums, ...tx.filter(t => !nm.has(t.date.slice(0, 7)))], balanceIndex(tx), acctMeta(), { ...loadFc(), mode: 'avg' });
+      const items = Object.entries(f.byCat).filter(([c, v]) => v < -500 && ['out', 'biz', 'save'].includes(catGroup(c)))
+        .map(([c, v]) => ({ name: c, amount: Math.round(-v / 1000) * 1000, g: catGroup(c), every: 'month', date: '' })).filter(it => it.amount > 0);
+      ui.budgetOpen = true;
+      ui.msg = items.length ? `${items.length} Posten aus dem Durchschnitt angelegt – jetzt an deine echte Monatsliste anpassen.` : 'Keine Ausgaben in den letzten Monaten gefunden.';
+      items.forEach(it => S.saveFmeta({ type: 'budget', ...it }));
+      if (!items.length) rerender();
+    }
     else if (a === 'fc') { const fc = loadFc(); fc[b.dataset.k] = +b.dataset.v; saveFc(fc); rerender(); }
     else if (a === 'plan-add') {
       const row = b.closest('.fin-asset');
@@ -764,6 +895,7 @@
   document.addEventListener('change', async ev => {
     const el = ev.target;
     if (!el.closest || !el.closest('.fin') || !el.dataset.fin) return;
+    if (el.dataset.fin === 'fc-tax') { const fc = loadFc(); fc.tax = Math.min(60, Math.max(0, +el.value || 0)); saveFc(fc); rerender(); return; }
     if (el.dataset.fin === 'fc-save') { const fc = loadFc(); fc.save = el.checked; saveFc(fc); rerender(); return; }
     if (el.dataset.fin === 'cat') {
       const t = S.finance.find(x => x.id === el.closest('.fin-row').dataset.id);
@@ -785,5 +917,5 @@
     }
   });
 
-  window.TB_FINANZEN = { view, CATS, _test: { parseCSV, toCents, toISO, categorize, rowsToFinance, balanceIndex, balancesAt, worthAt, parseEuro, forecast, planHits } };
+  window.TB_FINANZEN = { view, CATS, _test: { parseCSV, toCents, toISO, categorize, rowsToFinance, balanceIndex, balancesAt, worthAt, parseEuro, forecast, planHits, parseBudgetLines, needed } };
 })();
