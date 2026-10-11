@@ -756,3 +756,10 @@ img.missing { opacity: .35; }
 .sperre-karte input { height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
 .sperre-karte .btn.wide { margin-top: 0; }
 .sperre-fehler { color: var(--danger) !important; font-size: 14px; }
+/* Finanzen: Vorschau */
+.fin-fc-line { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+.fin-fc-dot { fill: var(--surface); stroke: var(--accent); stroke-width: 2; }
+.fin-fc-dot.neg { stroke: var(--danger); fill: var(--danger); }
+.fin-grid.fin-zero { stroke: var(--ink-3); }
+.fin-chip-label { color: var(--ink-2); font-size: 13px; align-self: center; margin-right: 4px; }
+.fin-fc-save { display: inline-flex; gap: 8px; align-items: center; font-size: 14px; color: var(--ink-2); margin: 4px 0 8px; }

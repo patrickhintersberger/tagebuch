@@ -413,6 +413,132 @@
       ${assetForm(index, meta)}`;
   }
 
+  // ---------- Vorschau ----------
+  // Kontostand in den nächsten Monaten: Konten heute (wie „Konten gesamt“ im Vermögen) + Ø je Monat aus den letzten
+  // vollen Monaten mit Daten (Einnahmen, Ausgaben privat und geschäftlich, wahlweise Sparen) + eigene geplante Posten.
+  // Immobilie (über Kredit) und Umbuchungen zählen nicht. Geplante Posten: fmeta {type: 'plan', name, amount, date, every}.
+  const EVERY = { once: ['einmalig', 0], month: ['monatlich', 1], quarter: ['vierteljährlich', 3], year: ['jährlich', 12] };
+  const planEntries = () => S.fmeta.filter(m => m.type === 'plan' && m.name && m.date);
+  const loadFc = () => { try { return { h: 6, b: 6, save: true, ...JSON.parse(localStorage.getItem('fin-forecast')) }; } catch { return { h: 6, b: 6, save: true }; } };
+  const saveFc = v => { try { localStorage.setItem('fin-forecast', JSON.stringify(v)); } catch { /* egal */ } };
+  const addMonthsKey = (key, n) => { const d = new Date(Date.UTC(+key.slice(0, 4), +key.slice(5, 7) - 1 + n, 1)); return d.toISOString().slice(0, 7); };
+  const monthLabel = key => `${MONTHS[+key.slice(5, 7) - 1]} ${key.slice(2, 4)}`;
+
+  /** Termine eines geplanten Postens im Monat `key` (nur ab heute) */
+  function planHits(p, key, today) {
+    const every = EVERY[p.every] ? EVERY[p.every][1] : 0;
+    const start = p.date.slice(0, 7);
+    if (key < start) return 0;
+    const diff = (+key.slice(0, 4) - +start.slice(0, 4)) * 12 + (+key.slice(5, 7) - +start.slice(5, 7));
+    if (every === 0 ? diff !== 0 : diff % every !== 0) return 0;
+    const day = `${key}-${p.date.slice(8, 10)}`;
+    return day >= today ? 1 : 0;
+  }
+
+  function forecast(counted, index, meta, fc) {
+    const today = todayISO();
+    const cur = today.slice(0, 7);
+    const w = worthAt(index, today, meta);
+    const stand = Object.values(w.acc).map(a => a.date).sort()[0] || null;
+    // Grundlage: die letzten fc.b vollen Monate mit Daten vor dem laufenden Monat
+    const basis = [...new Set(counted.map(t => t.date.slice(0, 7)))].filter(k => k < cur).sort().reverse().slice(0, fc.b).sort();
+    const n = Math.max(1, basis.length);
+    const avg = { in: 0, out: 0, biz: 0, save: 0 };
+    const byCat = {};
+    for (const t of counted) {
+      if (!basis.includes(t.date.slice(0, 7)) || !(t.g in avg)) continue;
+      avg[t.g] += t.amount / n;
+      byCat[t.cat] = (byCat[t.cat] || 0) + t.amount / n;
+    }
+    if (!fc.save) avg.save = 0;
+    const net = avg.in + avg.out + avg.biz + avg.save;
+    // laufender Monat nur noch anteilig (Rest des Monats)
+    const dim = new Date(+cur.slice(0, 4), +cur.slice(5, 7), 0).getDate();
+    const rest = (dim - +today.slice(8, 10)) / dim;
+    const plans = planEntries();
+    let bal = w.liquid;
+    const rows = [];
+    for (let i = 0; i <= fc.h; i++) {
+      const key = addMonthsKey(cur, i);
+      const f = i === 0 ? rest : 1;
+      const items = plans.filter(p => planHits(p, key, today)).map(p => ({ name: p.name, amount: p.amount }));
+      const planned = items.reduce((s, p) => s + p.amount, 0);
+      const r = { key, in: avg.in * f, out: (avg.out + avg.biz) * f, save: avg.save * f, planned, items };
+      bal += r.in + r.out + r.save + planned;
+      rows.push({ ...r, end: Math.round(bal) });
+    }
+    return { start: w.liquid, tax: w.tax, stand, basis, avg, net, byCat, rows };
+  }
+
+  function forecastChart(f) {
+    const vals = [f.start, ...f.rows.map(r => r.end)];
+    const labels = ['heute', ...f.rows.map(r => monthLabel(r.key))];
+    const lo = Math.min(0, ...vals), hi = Math.max(1, ...vals);
+    const step = (() => { const raw = (hi - lo) / 4 || 1; const p = 10 ** Math.floor(Math.log10(raw)); return [1, 2, 5, 10].map(x => x * p).find(s => s >= raw); })();
+    const top = Math.ceil(hi / step) * step, bot = Math.floor(lo / step) * step;
+    const W = 760, H = 230, L = 52, B = 26, T = 12, R = 16, plotH = H - B - T;
+    const x = i => L + (i * (W - L - R)) / Math.max(1, vals.length - 1);
+    const y = c => T + plotH - ((c - bot) / (top - bot)) * plotH;
+    const k = c => { const e = c / 100; return Math.abs(e) >= 1000 ? `${(e / 1000).toLocaleString('de-DE', { maximumFractionDigits: 1 })}k` : Math.round(e).toLocaleString('de-DE'); };
+    let svg = '';
+    for (let s = bot; s <= top; s += step) svg += `<line x1="${L}" x2="${W - R}" y1="${y(s)}" y2="${y(s)}" class="fin-grid${s === 0 ? ' fin-zero' : ''}"/><text x="${L - 6}" y="${y(s) + 4}" text-anchor="end" class="fin-ax">${k(s)}</text>`;
+    svg += `<polyline points="${vals.map((v, i) => `${x(i)},${y(v)}`).join(' ')}" class="fin-fc-line"/>`;
+    vals.forEach((v, i) => {
+      svg += `<circle cx="${x(i)}" cy="${y(v)}" r="4" class="fin-fc-dot${v < 0 ? ' neg' : ''}"><title>${labels[i]}: ${eur0(v)}</title></circle>`;
+      svg += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" class="fin-ax">${labels[i]}</text>`;
+    });
+    return `<div class="fin-chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Erwarteter Kontostand je Monatsende">${svg}</svg></div>`;
+  }
+
+  function forecastView(counted, index, meta) {
+    const fc = loadFc();
+    if (!Object.keys(index).length) return `<h2 class="ct-h">Vorschau</h2><section class="set"><p class="hint">Für die Vorschau braucht es Kontostände: den Finanzguru-Export über „Datei einlesen“ laden.</p></section>`;
+    const f = forecast(counted, index, meta, fc);
+    const last = f.rows[f.rows.length - 1];
+    const low = f.rows.reduce((m, r) => (r.end < m.end ? r : m), f.rows[0]);
+    const old = f.stand && (Date.now() - new Date(f.stand).getTime()) / 86400000 > 7;
+    const chips = (k, opts, label) => `<div class="chips"><span class="fin-chip-label">${label}</span>${opts.map(v => `<button class="chip" aria-pressed="${fc[k] === v}" data-fin="fc" data-k="${k}" data-v="${v}">${v} Monate</button>`).join('')}</div>`;
+    const sign = v => `${v > 0 ? '+' : ''}${eur0(v)}`;
+    const td = v => `<td class="${v < 0 ? 'neg' : v > 0 ? 'pos' : ''}">${Math.round(v) ? sign(v) : ''}</td>`;
+    const table = `<div class="ct-table fin-table"><table><thead><tr><th></th>${f.rows.map(r => `<th>${monthLabel(r.key)}${r.key === f.rows[0].key ? '<small>Rest</small>' : ''}</th>`).join('')}</tr></thead><tbody>
+      <tr><th>Einnahmen</th>${f.rows.map(r => td(r.in)).join('')}</tr>
+      <tr><th>Ausgaben (privat + geschäftlich)</th>${f.rows.map(r => td(r.out)).join('')}</tr>
+      ${fc.save ? `<tr><th>Sparen & Anlegen</th>${f.rows.map(r => td(r.save)).join('')}</tr>` : ''}
+      <tr><th>Geplante Posten</th>${f.rows.map(r => `<td class="${r.planned < 0 ? 'neg' : r.planned > 0 ? 'pos' : ''}"${r.items.length ? ` title="${esc(r.items.map(p => `${p.name}: ${eur0(p.amount)}`).join('\n'))}"` : ''}>${r.planned ? sign(r.planned) : ''}</td>`).join('')}</tr>
+      <tr class="tot"><th>Konten am Monatsende</th>${f.rows.map(r => `<td class="${r.end < 0 ? 'neg' : ''}">${eur0(r.end)}</td>`).join('')}</tr>
+    </tbody></table></div>`;
+    const top = Object.entries(f.byCat).filter(([, v]) => v < 0).sort((a, b) => a[1] - b[1]).slice(0, 5);
+    const plans = planEntries().sort((a, b) => a.date.localeCompare(b.date));
+    return `<h2 class="ct-h">Vorschau · nächste ${fc.h} Monate</h2>
+      ${low.end < 0 ? `<p class="fin-msg">${ms('warning')} Im ${MONTHS_LONG[+low.key.slice(5, 7) - 1]} ${low.key.slice(0, 4)} wären die Konten bei ${eur0(low.end)}.</p>` : ''}
+      <section class="fin-kpis">
+        <div><span>Konten heute</span><b>${eur0(f.start)}</b><small>${f.stand ? `Kontostand vom ${new Date(f.stand).toLocaleDateString('de-DE')}${old ? ' · neu einlesen' : ''}` : ''}</small></div>
+        <div><span>Ø pro Monat</span><b class="${f.net >= 0 ? 'ok' : 'bad'}">${sign(f.net)}</b><small>aus ${f.basis.length ? `${monthLabel(f.basis[0])} – ${monthLabel(f.basis[f.basis.length - 1])}` : 'keinen Monaten'}</small></div>
+        <div><span>Geplante Posten</span><b>${sign(f.rows.reduce((s, r) => s + r.planned, 0))}</b><small>${plans.length} eingetragen</small></div>
+        <div><span>Tiefster Stand</span><b class="${low.end >= 0 ? 'ok' : 'bad'}">${eur0(low.end)}</b><small>Ende ${MONTHS_LONG[+low.key.slice(5, 7) - 1]}</small></div>
+        <div><span>In ${fc.h} Monaten</span><b class="${last.end >= 0 ? 'ok' : 'bad'}">${eur0(last.end)}</b><small>${sign(last.end - f.start)} gegenüber heute${f.tax ? ` · Steuerkonto heute ${eur0(f.tax)}` : ''}</small></div>
+      </section>
+      ${chips('h', [3, 6, 12], 'Zeitraum')}
+      ${chips('b', [3, 6, 12], 'Ø aus den letzten')}
+      <label class="fin-count fin-fc-save"><input type="checkbox" data-fin="fc-save" ${fc.save ? 'checked' : ''}> Sparen & Anlegen als Abfluss rechnen</label>
+      ${forecastChart(f)}
+      ${table}
+      <p class="hint">Rechnet mit dem Durchschnitt je Monat: Einnahmen ${eur0(f.avg.in)}, Ausgaben privat ${eur0(-f.avg.out)}, geschäftlich ${eur0(-f.avg.biz)}${fc.save ? `, Sparen ${eur0(-f.avg.save)}` : ''}.${top.length ? ` Größte Posten: ${top.map(([c, v]) => `${esc(c)} ${eur0(-v)}`).join(', ')}.` : ''} Einmalige Sachen wie Urlaub, Steuernachzahlung oder eine Anschaffung trägst du unten ein.</p>
+      <details class="set fin-assets"${ui.plansOpen ? ' open' : ''}><summary data-fin="plans-toggle">Geplante Posten (${plans.length})</summary>
+        <p class="hint">Ausgaben mit Minus, Einnahmen ohne. Wiederkehrende Posten laufen ab dem Datum weiter.</p>
+        <div class="list">${plans.map(p => `<div class="fin-asset"><div class="fin-name"><b>${esc(p.name)}</b><small>${new Date(p.date).toLocaleDateString('de-DE')} · ${(EVERY[p.every] || EVERY.once)[0]}</small></div>
+          <b class="fin-amt ${p.amount < 0 ? 'neg' : 'pos'}">${eur(p.amount)}</b>
+          <button class="icon-btn" data-fin="plan-del" data-id="${esc(p.id)}" aria-label="${esc(p.name)} löschen">${ms('delete')}</button></div>`).join('')}
+          <div class="fin-asset fin-asset-new">
+            <input type="text" placeholder="z. B. Urlaub Mallorca" aria-label="Name" data-k="name">
+            <input type="text" inputmode="decimal" placeholder="Betrag, Ausgabe mit Minus" aria-label="Betrag" data-k="amount">
+            <input type="date" value="${todayISO()}" aria-label="Datum" data-k="date">
+            <select data-k="every" aria-label="Rhythmus">${Object.entries(EVERY).map(([k, [l]]) => `<option value="${k}">${l}</option>`).join('')}</select>
+            <button class="btn small" data-fin="plan-add">Hinzufügen</button>
+          </div></div>
+      </details>`;
+  }
+
   function assetForm(index, meta) {
     const latest = assetsAt('9999-12-31');
     const now = balancesAt(index, '9999-12-31');
@@ -456,7 +582,7 @@
   }
 
   // ---------- Auswertung ----------
-  const ui = { year: String(new Date().getFullYear()), month: null, filter: 'open', msg: '', busy: false, assetsOpen: false };
+  const ui = { year: String(new Date().getFullYear()), month: null, filter: 'open', msg: '', busy: false, assetsOpen: false, plansOpen: false };
 
   function enriched() {
     return S.finance.map(t => {
@@ -545,6 +671,7 @@
       </section>
       ${saved || prop ? `<p class="hint">${[saved ? `Gespart und angelegt: ${eur0(saved)}` : '', prop ? `Immobilie (Kauf & Umbau über Kredit, nicht in den Ausgaben): ${eur0(prop)}` : ''].filter(Boolean).join(' · ')}.</p>` : ''}
       ${wealthView(tx)}
+      ${forecastView(counted, balanceIndex(tx), acctMeta())}
       <h2 class="ct-h">Monate ${esc(ui.year)}</h2>
       ${chart(yearRows)}
       <h2 class="ct-h">Jahresübersicht ${esc(ui.year)}</h2>
@@ -582,6 +709,18 @@
       S.saveFmeta({ ...(old || {}), type: 'rule', match, cat });
     } else if (a === 'rule-del') S.deleteFmeta(b.dataset.id);
     else if (a === 'assets-toggle') ui.assetsOpen = !b.closest('details').open;
+    else if (a === 'plans-toggle') ui.plansOpen = !b.closest('details').open;
+    else if (a === 'fc') { const fc = loadFc(); fc[b.dataset.k] = +b.dataset.v; saveFc(fc); rerender(); }
+    else if (a === 'plan-add') {
+      const row = b.closest('.fin-asset');
+      const field = k => row.querySelector(`[data-k="${k}"]`);
+      const name = field('name').value.trim();
+      const amount = parseEuro(field('amount').value);
+      ui.plansOpen = true;
+      if (!name || !amount) { ui.msg = 'Bitte Name und Betrag eintragen, Ausgaben mit Minus.'; rerender(); return; }
+      ui.msg = `Geplant: ${name} ${eur0(amount)} ab ${new Date(field('date').value || todayISO()).toLocaleDateString('de-DE')}.`;
+      S.saveFmeta({ type: 'plan', name, amount, date: field('date').value || todayISO(), every: field('every').value });
+    } else if (a === 'plan-del') { ui.plansOpen = true; S.deleteFmeta(b.dataset.id); }
     else if (a === 'fold') { const f = loadFold(); f[b.dataset.g] = !f[b.dataset.g]; saveFold(f); rerender(); }
     else if (a === 'asset-save' || a === 'asset-add') {
       const row = b.closest('.fin-asset');
@@ -625,6 +764,7 @@
   document.addEventListener('change', async ev => {
     const el = ev.target;
     if (!el.closest || !el.closest('.fin') || !el.dataset.fin) return;
+    if (el.dataset.fin === 'fc-save') { const fc = loadFc(); fc.save = el.checked; saveFc(fc); rerender(); return; }
     if (el.dataset.fin === 'cat') {
       const t = S.finance.find(x => x.id === el.closest('.fin-row').dataset.id);
       if (t) { const n = { ...t }; if (el.value) n.cat = el.value; else delete n.cat; S.saveFinance([n], true); }
@@ -645,5 +785,5 @@
     }
   });
 
-  window.TB_FINANZEN = { view, CATS, _test: { parseCSV, toCents, toISO, categorize, rowsToFinance, balanceIndex, balancesAt, worthAt, parseEuro } };
+  window.TB_FINANZEN = { view, CATS, _test: { parseCSV, toCents, toISO, categorize, rowsToFinance, balanceIndex, balancesAt, worthAt, parseEuro, forecast, planHits } };
 })();
