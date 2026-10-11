@@ -4,6 +4,7 @@
 // Monate und zeigen die Einzelheiten. Korrekturen lernen mit: „Immer so“ legt eine Regel an.
 // Daten: Buchungen in data/f<Jahr>.json, Regeln in data/fmeta.json (privates Daten-Repo, nie im App-Repo).
 (function () {
+  if (window.TB_GESPERRT) return; // ohne Anmeldung startet nichts (sperre.js)
   'use strict';
   const S = window.TB_STORE;
   const $ = (s, r = document) => r.querySelector(s);

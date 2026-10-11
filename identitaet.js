@@ -5,6 +5,7 @@
 // Weitere Einträge dort: Runden (kind 'round', alle Antworten in a), Check-Ins je Monat (kind 'checkin')
 // und gelesene Tage (kind 'read'). Alle 90 Tage beginnt eine neue Runde komplett leer – Patrick startet jedes Mal bei null.
 (function () {
+  if (window.TB_GESPERRT) return; // ohne Anmeldung startet nichts (sperre.js)
   'use strict';
   const S = window.TB_STORE;
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];

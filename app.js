@@ -1,5 +1,6 @@
 // Tagebuch – Oberfläche: Einträge, Kalender, Karte, Rückblick, Editor und Einstellungen.
 (function () {
+  if (window.TB_GESPERRT) return; // ohne Anmeldung startet nichts (sperre.js)
   'use strict';
   const S = window.TB_STORE;
   const $ = (s, r = document) => r.querySelector(s);
@@ -2166,7 +2167,7 @@
     'tpl-cancel': () => { editTpl = null; ui.built = null; render(); },
     'tpl-delete': el => { if (!confirm('Diese Vorlage löschen?')) return; editTpl = null; S.deleteTemplate(el.dataset.id); ui.built = null; render(); },
     'sync-now': async () => { await S.sync(); if (settingsOpen()) openSettings(); toast(S.statusText); },
-    'token-clear': () => { S.setToken(null); openSettings(); },
+    'token-clear': () => { if (!confirm('Token entfernen? Danach ist Daily auf diesem Gerät gesperrt, bis du dich wieder anmeldest.')) return; S.setToken(null); location.reload(); },
     export: () => {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([S.exportJSON()], { type: 'application/json' }));

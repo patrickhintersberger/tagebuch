@@ -5,6 +5,7 @@
 // Alles darin ist mit AES-GCM verschlüsselt; der Schlüssel steht nur im Link hinter dem # und geht nie an einen Server.
 // Abgelaufene Freigaben löscht Daily beim nächsten Start, die Ansicht sperrt sich ab dem Folgetag ohnehin selbst.
 (function () {
+  if (window.TB_GESPERRT) return; // ohne Anmeldung startet nichts (sperre.js)
   'use strict';
   const S = window.TB_STORE;
   const cfg = window.TB_CONFIG;

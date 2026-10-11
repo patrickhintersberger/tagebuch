@@ -3,6 +3,7 @@
 // Bilder als einzelne Dateien daneben. So wird beim Speichern nur das betroffene Jahr übertragen.
 // Zusammenführung pro Eintrag nach updatedAt, Löschungen bleiben als "deleted"-Markierung erhalten.
 (function () {
+  if (window.TB_GESPERRT) return; // ohne Anmeldung startet nichts (sperre.js)
   const LS_TOKEN = 'tb-token';
   const LS_REPO = 'tb-repo';
   const cfg = window.TB_CONFIG;
