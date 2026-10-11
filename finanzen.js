@@ -438,17 +438,20 @@
 
   // Standard-Ausgaben: fmeta {type: 'budget', name, amount (Cent, positiv), g: out|biz|save, every: month|quarter|year, date}.
   // Vierteljährliche und jährliche Posten fallen im Monat ihres Datums an (und dann alle 3 bzw. 12 Monate).
-  const BUDGET_G = [['out', 'privat'], ['biz', 'geschäftlich'], ['save', 'Sparen & Anlegen']];
+  // g 'in' = feste Einnahme ohne Rechnung (z. B. Mieteinnahmen), mindert, was du verdienen musst
+  const BUDGET_G = [['out', 'privat'], ['biz', 'geschäftlich'], ['save', 'Sparen & Anlegen'], ['in', 'feste Einnahmen (z. B. Miete)']];
+  const REVENUE_CAT = 'Gehalt vom Hauptjob'; // Umsatz aus dem eigenen Geschäft
   const budgetEntries = () => S.fmeta.filter(m => m.type === 'budget' && m.name);
   const perMonth = b => b.amount / ((EVERY[b.every] || EVERY.month)[1] || 1);
 
   /** Was im Monat nötig ist, damit die Standard-Ausgaben gedeckt sind (Einkommensteuer nur auf den Gewinn) */
   function needed(budgets, taxRate, withSave) {
     const sum = g => budgets.filter(b => b.g === g).reduce((s, b) => s + perMonth(b), 0);
-    const priv = sum('out') + (withSave ? sum('save') : 0), biz = sum('biz');
+    const inc = sum('in');
+    const priv = Math.max(0, sum('out') + (withSave ? sum('save') : 0) - inc), biz = sum('biz');
     const profit = priv / (1 - taxRate); // Gewinn vor Einkommensteuer, damit privat genug übrig bleibt
     const netto = profit + biz;
-    return { priv, biz, save: withSave ? sum('save') : 0, total: priv + biz, profit, tax: profit - priv, netto, brutto: netto * (1 + UST_RATE) };
+    return { priv, biz, inc, out: sum('out'), save: withSave ? sum('save') : 0, total: sum('out') + biz + (withSave ? sum('save') : 0), profit, tax: profit - priv, netto, brutto: netto * (1 + UST_RATE) };
   }
 
   /** „Warmmiete 1.250“, „Adobe 65 geschäftlich“, „KFZ-Versicherung 480 jährlich“, „Depot 500 sparen“ */
@@ -462,11 +465,12 @@
       const amount = parseEuro(nums[nums.length - 1]);
       if (!amount) continue;
       const low = line.toLowerCase();
-      const g = /geschäft|geschaeft|business|firma/.test(low) ? 'biz' : /spar|depot|anlegen|etf/.test(low) ? 'save' : 'out';
+      // Minus = Einnahme (z. B. „Miete Mering -1.830“)
+      const g = amount < 0 || /einnahme/.test(low) ? 'in' : /geschäft|geschaeft|business|firma/.test(low) ? 'biz' : /spar|depot|anlegen|etf|rücklage|ruecklage/.test(low) ? 'save' : 'out';
       const every = /viertel|quartal/.test(low) ? 'quarter' : /jähr|jaehr|jahr/.test(low) ? 'year' : 'month';
       const name = line.replace(nums[nums.length - 1], ' ')
-        .replace(/\b(geschäftlich|geschaeftlich|business|firma|privat|sparen|anlegen|monatlich|vierteljährlich|quartalsweise|jährlich|jaehrlich|pro monat|im monat|im jahr|pro jahr)\b/gi, ' ')
-        .replace(/€|eur\b/gi, ' ').replace(/[;:|\t]+/g, ' ').replace(/\s+[-–]\s*$/, '').replace(/\s+/g, ' ').trim();
+        .replace(/\b(geschäftlich|geschaeftlich|business|firma|privat|sparen|einnahme|monatlich|vierteljährlich|quartalsweise|jährlich|jaehrlich|pro monat|im monat|im jahr|pro jahr)\b/gi, ' ')
+        .replace(/€|(^|\s)eur\b/gi, ' ').replace(/[;:|\t]+/g, ' ').replace(/\s+[-–]\s*$/, '').replace(/\s+/g, ' ').trim();
       if (name) out.push({ name, amount: Math.abs(amount), g, every });
     }
     return out;
@@ -507,16 +511,18 @@
         // monatliche Posten anteilig, seltenere im Monat ihres Datums
         const hit = b => (b.every === 'month' || !b.date ? f : planHits(b, key, today));
         // Umsatzsteuer in den Geschäftseinnahmen geht weiter ans Finanzamt, auch wenn sie nicht in der Liste steht
-        out = -budgets.filter(b => b.g !== 'save').reduce((s, b) => s + b.amount * hit(b), 0) - ust * f;
+        out = -budgets.filter(b => b.g === 'out' || b.g === 'biz').reduce((s, b) => s + b.amount * hit(b), 0) - ust * f;
         save = fc.save ? -budgets.filter(b => b.g === 'save').reduce((s, b) => s + b.amount * hit(b), 0) : 0;
       }
-      const r = { key, in: avg.in * f, out, save, planned, items };
+      // mit Liste: Umsatz aus dem Ø, feste Einnahmen (Miete) aus der Liste statt aus dem Ø
+      const inc = useList ? (byCat[REVENUE_CAT] || 0) * f + budgets.filter(b => b.g === 'in').reduce((s, b) => s + b.amount * (b.every === 'month' || !b.date ? f : planHits(b, key, today)), 0) : avg.in * f;
+      const r = { key, in: inc, out, save, planned, items };
       bal += r.in + r.out + r.save + planned;
       rows.push({ ...r, end: Math.round(bal) });
     }
     const full = rows.slice(1);
     const net = full.length ? full.reduce((s, r) => s + r.in + r.out + r.save, 0) / full.length : 0;
-    return { start: w.liquid, tax: w.tax, stand, basis, avg, net, byCat, rows, useList, budgets, ust };
+    return { start: w.liquid, tax: w.tax, stand, basis, avg, net, byCat, rows, useList, budgets, ust, revenue: byCat[REVENUE_CAT] || 0 };
   }
 
   function forecastChart(f) {
@@ -559,17 +565,17 @@
     const top = Object.entries(f.byCat).filter(([, v]) => v < 0).sort((a, b) => a[1] - b[1]).slice(0, 5);
     const plans = planEntries().sort((a, b) => a.date.localeCompare(b.date));
     const need = needed(f.budgets, fc.tax / 100, fc.save);
-    const gap = f.avg.in - need.brutto;
+    const gap = f.revenue - need.brutto;
     const modeChips = `<div class="chips"><span class="fin-chip-label">Ausgaben aus</span><button class="chip" aria-pressed="${f.useList}" data-fin="fc-mode" data-v="list">meiner Liste${f.budgets.length ? '' : ' (leer)'}</button><button class="chip" aria-pressed="${!f.useList}" data-fin="fc-mode" data-v="avg">Durchschnitt</button></div>`;
     const earn = f.budgets.length ? `<h2 class="ct-h">Was du im Monat verdienen musst</h2>
       <section class="fin-kpis">
-        <div><span>Ausgaben laut Liste</span><b>${eur0(need.total)}</b><small>privat ${eur0(need.priv - need.save)}${need.save ? ` · Sparen ${eur0(need.save)}` : ''} · geschäftlich ${eur0(need.biz)}</small></div>
+        <div><span>Ausgaben laut Liste</span><b>${eur0(need.total)}</b><small>privat ${eur0(need.out)}${need.save ? ` · Sparen ${eur0(need.save)}` : ''} · geschäftlich ${eur0(need.biz)}${need.inc ? ` · feste Einnahmen −${eur0(need.inc)}` : ''}</small></div>
         <div><span>Einkommensteuer</span><b>${eur0(need.tax)}</b><small><label>Satz <input type="number" min="0" max="60" step="1" value="${fc.tax}" data-fin="fc-tax" class="fin-tax" aria-label="Steuersatz in Prozent"> % auf den Gewinn</label></small></div>
         <div><span>Nötiger Umsatz netto</span><b>${eur0(need.netto)}</b><small>Gewinn ${eur0(need.profit)} + geschäftliche Ausgaben</small></div>
         <div><span>Als Rechnungsbetrag</span><b>${eur0(need.brutto)}</b><small>inkl. ${Math.round(UST_RATE * 100)} % Umsatzsteuer</small></div>
-        <div><span>Ø Einnahmen zuletzt</span><b class="${gap >= 0 ? 'ok' : 'bad'}">${eur0(f.avg.in)}</b><small>${gap >= 0 ? `${eur0(gap)} über dem Nötigen` : `${eur0(-gap)} fehlen im Monat`}</small></div>
+        <div><span>Ø Umsatz zuletzt</span><b class="${gap >= 0 ? 'ok' : 'bad'}">${eur0(f.revenue)}</b><small>${gap >= 0 ? `${eur0(gap)} über dem Nötigen` : `${eur0(-gap)} fehlen im Monat`}</small></div>
       </section>
-      <p class="hint">Vierteljährliche und jährliche Posten sind auf den Monat umgerechnet. Die Einkommensteuer rechnet nur auf den Gewinn (Umsatz minus geschäftliche Ausgaben); Sparen zählt ${fc.save ? 'mit' : 'nicht mit'}.</p>` : '';
+      <p class="hint">Vierteljährliche und jährliche Posten sind auf den Monat umgerechnet. Feste Einnahmen wie Miete decken einen Teil der privaten Ausgaben, der Rest muss als Gewinn aus dem Geschäft kommen. Die Einkommensteuer rechnet nur auf diesen Gewinn (Umsatz minus geschäftliche Ausgaben), Steuern auf die Mieteinnahmen sind nicht eingerechnet. Sparen zählt ${fc.save ? 'mit' : 'nicht mit'}.</p>` : '';
     const bRow = b => `<div class="fin-asset" data-id="${esc(b.id)}">
         <input type="text" data-k="name" value="${esc(b.name)}" aria-label="Name">
         <input type="text" inputmode="decimal" data-k="amount" value="${(b.amount / 100).toLocaleString('de-DE')}" aria-label="Betrag für ${esc(b.name)}">
@@ -578,8 +584,8 @@
         <input type="date" data-k="date" value="${esc(b.date || '')}" aria-label="Nächste Fälligkeit" title="Bei vierteljährlich und jährlich: wann fällig">
         <span class="fin-acts"><button class="btn small" data-fin="budget-save">Speichern</button>
         <button class="icon-btn" data-fin="budget-del" data-id="${esc(b.id)}" aria-label="${esc(b.name)} löschen">${ms('delete')}</button></span></div>`;
-    const budgetForm = `<details class="set fin-assets"${ui.budgetOpen ? ' open' : ''}><summary data-fin="budget-toggle">Standard-Ausgaben pro Monat (${f.budgets.length}${f.budgets.length ? ` · ${eur0(f.budgets.reduce((t, b) => t + perMonth(b), 0))} im Monat` : ''})</summary>
-        <p class="hint">Deine feste Monatsliste: Miete, Versicherungen, Lebensmittel, Software usw. Beträge ohne Minus. Bei vierteljährlich und jährlich das Datum der nächsten Zahlung eintragen. Einkommensteuer-Vorauszahlungen als vierteljährlichen Posten „geschäftlich“ eintragen; die Umsatzsteuer rechnet die Vorschau selbst.</p>
+    const budgetForm = `<details class="set fin-assets"${ui.budgetOpen ? ' open' : ''}><summary data-fin="budget-toggle">Standard-Ausgaben pro Monat (${f.budgets.length}${f.budgets.length ? ` · ${eur0(f.budgets.reduce((t, b) => t + (b.g === 'in' ? -1 : 1) * perMonth(b), 0))} im Monat nach festen Einnahmen` : ''})</summary>
+        <p class="hint">Deine feste Monatsliste: Miete, Versicherungen, Lebensmittel, Software usw. Beträge ohne Minus; feste Einnahmen wie Mieteinnahmen mit der Art „feste Einnahmen“. Bei vierteljährlich und jährlich das Datum der nächsten Zahlung eintragen. Einkommensteuer-Vorauszahlungen als vierteljährlichen Posten „geschäftlich“ eintragen; die Umsatzsteuer rechnet die Vorschau selbst.</p>
         ${BUDGET_G.map(([g, l]) => { const list = f.budgets.filter(b => b.g === g).sort((a, b) => b.amount - a.amount); return list.length ? `<h3 class="fin-sub">${l} · ${eur0(list.reduce((s, b) => s + perMonth(b), 0))} im Monat</h3><div class="list">${list.map(bRow).join('')}</div>` : ''; }).join('')}
         <h3 class="fin-sub">Neuer Posten</h3>
         <div class="list"><div class="fin-asset fin-asset-new">
@@ -591,7 +597,7 @@
           <button class="btn small" data-fin="budget-add">Hinzufügen</button>
         </div></div>
         <h3 class="fin-sub">Liste einfügen</h3>
-        <p class="hint">Eine Zeile pro Posten, z. B. „Warmmiete 1.250“, „Adobe 65 geschäftlich“, „KFZ-Versicherung 480 jährlich“ oder „Depot 500 sparen“. Gleiche Namen werden überschrieben.</p>
+        <p class="hint">Eine Zeile pro Posten, z. B. „Warmmiete 1.250“, „Adobe 65 geschäftlich“, „KFZ-Versicherung 480 jährlich“ oder „Depot 500 sparen“ oder „Miete Mering -1.830“ (Minus = Einnahme). Gleiche Namen werden überschrieben.</p>
         <textarea class="fin-paste" rows="5" data-k="paste" aria-label="Liste einfügen" placeholder="Warmmiete 1.250&#10;Lebensmittel 600&#10;Adobe 65 geschäftlich&#10;KFZ-Versicherung 480 jährlich"></textarea>
         <div class="row-btns"><button class="btn small" data-fin="budget-paste">Übernehmen</button>
         ${f.budgets.length ? '' : `<button class="btn small ghost" data-fin="budget-suggest">Aus den letzten Monaten vorschlagen</button>`}</div>
@@ -600,7 +606,7 @@
       ${low.end < 0 ? `<p class="fin-msg">${ms('warning')} Im ${MONTHS_LONG[+low.key.slice(5, 7) - 1]} ${low.key.slice(0, 4)} wären die Konten bei ${eur0(low.end)}.</p>` : ''}
       <section class="fin-kpis">
         <div><span>Konten heute</span><b>${eur0(f.start)}</b><small>${f.stand ? `Kontostand vom ${new Date(f.stand).toLocaleDateString('de-DE')}${old ? ' · neu einlesen' : ''}` : ''}</small></div>
-        <div><span>Ø pro Monat</span><b class="${f.net >= 0 ? 'ok' : 'bad'}">${sign(f.net)}</b><small>${f.useList ? 'Einnahmen Ø, Ausgaben laut Liste' : `aus ${f.basis.length ? `${monthLabel(f.basis[0])} – ${monthLabel(f.basis[f.basis.length - 1])}` : 'keinen Monaten'}`}</small></div>
+        <div><span>Ø pro Monat</span><b class="${f.net >= 0 ? 'ok' : 'bad'}">${sign(f.net)}</b><small>${f.useList ? 'Umsatz Ø, der Rest laut Liste' : `aus ${f.basis.length ? `${monthLabel(f.basis[0])} – ${monthLabel(f.basis[f.basis.length - 1])}` : 'keinen Monaten'}`}</small></div>
         <div><span>Geplante Posten</span><b>${sign(f.rows.reduce((s, r) => s + r.planned, 0))}</b><small>${plans.length} eingetragen</small></div>
         <div><span>Tiefster Stand</span><b class="${low.end >= 0 ? 'ok' : 'bad'}">${eur0(low.end)}</b><small>Ende ${MONTHS_LONG[+low.key.slice(5, 7) - 1]}</small></div>
         <div><span>In ${fc.h} Monaten</span><b class="${last.end >= 0 ? 'ok' : 'bad'}">${eur0(last.end)}</b><small>${sign(last.end - f.start)} gegenüber heute${f.tax ? ` · Steuerkonto heute ${eur0(f.tax)}` : ''}</small></div>
@@ -612,7 +618,7 @@
       ${forecastChart(f)}
       ${table}
       <p class="hint">${f.useList
-        ? `Einnahmen aus dem Durchschnitt (${eur0(f.avg.in)} im Monat), Ausgaben aus deiner Liste${f.ust ? ` plus Umsatzsteuer ans Finanzamt (Ø ${eur0(f.ust)})` : ''}.`
+        ? `Umsatz aus dem Durchschnitt (${eur0(f.revenue)} im Monat), feste Einnahmen und Ausgaben aus deiner Liste${f.ust ? ` plus Umsatzsteuer ans Finanzamt (Ø ${eur0(f.ust)})` : ''}.`
         : `Rechnet mit dem Durchschnitt je Monat: Einnahmen ${eur0(f.avg.in)}, Ausgaben privat ${eur0(-f.avg.out)}, geschäftlich ${eur0(-f.avg.biz)}${fc.save ? `, Sparen ${eur0(-f.avg.save)}` : ''}.${top.length ? ` Größte Posten: ${top.map(([c, v]) => `${esc(c)} ${eur0(-v)}`).join(', ')}.` : ''}`} Einmalige Sachen wie Urlaub, Steuernachzahlung oder eine Anschaffung trägst du unten ein.</p>
       ${budgetForm}
       <details class="set fin-assets"${ui.plansOpen ? ' open' : ''}><summary data-fin="plans-toggle">Geplante Posten (${plans.length})</summary>
