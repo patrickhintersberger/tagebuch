@@ -41,7 +41,7 @@
   // Grundregeln für Bank-CSV ohne Kategorie; eigene Regeln (aus „Immer so“) haben Vorrang.
   const BASE_RULES = [
     [/\b(aral|shell|esso|jet tank|totalenergies|agip|omv|tankstelle|avia)\b/, 'Auto (Benzinkosten, Vers. Etc.)'],
-    [/\b(rewe|edeka|lidl|aldi|netto|kaufland|penny|norma|alnatura|tegut|globus)\b/, 'Lebensmittel (Supermarkteinkäufe)'],
+    [/\b(rewe|edeka|lidl|aldi|netto|kaufland|penny|norma|alnatura|tegut|globus|picnic|flink|getir)\b/, 'Lebensmittel (Supermarkteinkäufe)'],
     [/\b(lieferando|wolt|uber eats|mcdonald|burger king|restaurant|pizzeria|bäckerei|starbucks)\b/, 'Außer Haus essen / bestellen'],
     [/\b(spotify|netflix|disney|audible|dazn)\b/, 'Spotify, Netflix und Co.'],
     [/\b(vodafone|telekom|congstar)\b/, 'Handyvertrag/Prepaid'],
@@ -664,6 +664,7 @@
         <input type="date" data-k="date" value="${esc(b.date || '')}" aria-label="Nächste Fälligkeit" title="Bei vierteljährlich und jährlich: wann fällig">
         <input type="text" data-k="match" value="${esc(b.match || '')}" placeholder="Suchwort für Abgleich" aria-label="Suchwort für den Abgleich mit den Buchungen" title="Teil des Empfängers in den Buchungen, z. B. „Santander“">
         <span class="fin-acts"><button class="btn small" data-fin="budget-save">Speichern</button>
+        <button class="icon-btn" data-fin="budget-split" data-id="${esc(b.id)}" aria-label="${esc(b.name)} aufteilen" title="In zwei Posten aufteilen, z. B. Finanzierung und Versicherung">${ms('call_split')}</button>
         <button class="icon-btn" data-fin="budget-del" data-id="${esc(b.id)}" aria-label="${esc(b.name)} löschen">${ms('delete')}</button></span></div>`;
     const budgetForm = `<details class="set fin-assets"${ui.budgetOpen ? ' open' : ''}><summary data-fin="budget-toggle">Standard-Ausgaben pro Monat (${f.budgets.length}${f.budgets.length ? ` · ${eur0(f.budgets.reduce((t, b) => t + (b.g === 'in' ? -1 : 1) * perMonth(b), 0))} im Monat nach festen Einnahmen` : ''})</summary>
         <p class="hint">Deine feste Monatsliste: Miete, Versicherungen, Lebensmittel, Software usw. Beträge ohne Minus; feste Einnahmen wie Mieteinnahmen mit der Art „feste Einnahmen“. Bei vierteljährlich und jährlich das Datum der nächsten Zahlung eintragen. Einkommensteuer-Vorauszahlungen als vierteljährlichen Posten „geschäftlich“ eintragen; die Umsatzsteuer rechnet die Vorschau selbst.</p>
@@ -789,7 +790,11 @@
     const inMonth = tx.filter(t => t.date.slice(0, 7) === key);
     const used = new Set();
     const checks = {};
-    S.fmeta.filter(m => m.type === 'mcheck' && m.month === key).forEach(m => { checks[m.ref] = m; });
+    S.fmeta.filter(m => m.type === 'mcheck' && m.month === key).forEach(m => { checks[m.ref] = m; if (m.tx) used.add(m.tx); });
+    // variable Posten: zugeordnete Buchungen (fmeta 'mlink') und von Hand eingetragene Beträge (fmeta 'mspend')
+    const links = S.fmeta.filter(m => m.type === 'mlink' && m.month === key);
+    const spends = S.fmeta.filter(m => m.type === 'mspend' && m.month === key);
+    links.forEach(m => used.add(m.tx));
     const posts = [
       ...budgetEntries().filter(b => dueInMonth(b, key)).map(b => ({ id: b.id, name: b.name, g: b.g, amount: b.amount, match: b.match, every: b.every, plan: false })),
       ...planEntries().filter(p => p.date.slice(0, 7) <= key && planHits(p, key, key + '-01')).map(p => ({ id: p.id, name: p.name, g: p.amount < 0 ? 'out' : 'in', amount: Math.abs(p.amount), match: p.match, plan: true })),
@@ -800,15 +805,23 @@
       const text = t => norm([t.payee, t.text, t.note].filter(Boolean).join(' '));
       const near = (t, tol) => Math.abs(Math.abs(t.amount) - it.amount) <= Math.max(100, it.amount * tol);
       const cands = inMonth.filter(t => !used.has(t.id) && Math.sign(t.amount) === sign);
-      let hit = words.length ? cands.find(t => words.some(w => text(t).includes(w)) && near(t, 0.3)) : null;
+      // von Hand zugeordnete Buchung (aus „ohne Standard-Posten“) geht vor
+      const linked = checks[it.id] && checks[it.id].tx ? inMonth.find(t => t.id === checks[it.id].tx) : null;
+      let hit = linked || (words.length ? cands.find(t => words.some(w => text(t).includes(w)) && near(t, 0.3)) : null);
       if (!hit) hit = cands.find(t => near(t, 0) && Math.abs(Math.abs(t.amount) - it.amount) <= 100);
       if (hit) used.add(hit.id);
-      // variable Posten: passende Kategorie (z. B. „Lebensmittel“ → „Lebensmittel (Supermarkteinkäufe)“)
+      // variable Posten: passende Kategorie (z. B. „Lebensmittel“ → „Lebensmittel (Supermarkteinkäufe)“),
+      // dazu zugeordnete Buchungen und Beträge von Hand
+      const myLinks = links.filter(m => m.ref === it.id).map(m => inMonth.find(t => t.id === m.tx)).filter(Boolean);
+      const mySpends = spends.filter(m => m.ref === it.id);
       const cat = !hit && it.name.length >= 5 ? CATS.find(c => norm(c.name).startsWith(norm(it.name))) : null;
-      const spent = cat ? -inMonth.filter(t => t.cat === cat.name).reduce((s, t) => s + t.amount, 0) : null;
+      const variable = !!cat || myLinks.length > 0 || mySpends.length > 0;
+      if (variable && hit && !linked) { used.delete(hit.id); hit = null; } // zugeordnete Buchungen/Beträge: Verbrauch statt Einzelbuchung
+      const spent = variable ? -inMonth.filter(t => cat && t.cat === cat.name && !links.some(l => l.tx === t.id && l.ref !== it.id)).reduce((s, t) => s + t.amount, 0)
+        - myLinks.filter(t => !cat || t.cat !== cat.name).reduce((s, t) => s + t.amount, 0) + mySpends.reduce((s, m) => s + m.amount, 0) : null;
       const manual = checks[it.id];
       const done = manual ? !!manual.done : !!hit;
-      return { ...it, hit, cat, spent, manual, done };
+      return { ...it, hit, cat, variable, spent, links: myLinks, spends: mySpends, manual, done };
     });
     return { items, inMonth };
   }
@@ -837,11 +850,15 @@
           : it.spent != null ? `verbraucht ${eur0(it.spent)} von ${eur0(it.amount)} · noch ${eur0(Math.max(0, it.amount - it.spent))}`
             : 'offen';
       const pct = it.spent != null && !it.done ? Math.min(100, Math.round((it.spent / Math.max(1, it.amount)) * 100)) : null;
-      return `<label class="fin-mrow${it.done ? ' done' : ''}">
-        <input type="checkbox" data-fin="mcheck" data-ref="${esc(it.id)}" data-month="${key}" ${it.done ? 'checked' : ''}>
+      const extra = it.variable && !it.done ? `<span class="fin-spend">
+          ${[...it.links.map(t => `<span class="fin-tag">${esc(t.payee || t.text || 'Buchung')} ${eur0(-t.amount)}</span>`), ...it.spends.map(m => `<span class="fin-tag">${esc(m.note || 'von Hand')} ${eur0(m.amount)} <button class="fin-x" data-fin="mspend-del" data-id="${esc(m.id)}" aria-label="Betrag löschen">×</button></span>`)].join('')}
+          <input type="text" inputmode="decimal" placeholder="Betrag" data-k="spend" aria-label="Betrag von Hand für ${esc(it.name)}"><input type="text" placeholder="wofür (optional)" data-k="note" aria-label="Notiz">
+          <button class="btn small" data-fin="mspend-add" data-ref="${esc(it.id)}" data-month="${key}">＋ eintragen</button></span>` : '';
+      return `<div class="fin-mrow${it.done ? ' done' : ''}">
+        <input type="checkbox" data-fin="mcheck" data-ref="${esc(it.id)}" data-month="${key}" ${it.done ? 'checked' : ''} aria-label="${esc(it.name)} erledigt">
         <span class="fin-main"><b>${esc(it.name)}${it.plan ? ' <small class="fin-tag">geplant</small>' : ''}${it.every && it.every !== 'month' ? ` <small class="fin-tag">${EVERY[it.every][0]}</small>` : ''}</b><small>${status}</small>
-        ${pct !== null ? `<i class="fin-bar"><i style="width:${pct}%" class="${it.spent > it.amount ? 'over' : ''}"></i></i>` : ''}</span>
-        <b class="fin-amt ${it.g === 'in' ? 'pos' : ''}">${eur(it.amount)}</b></label>`;
+        ${pct !== null ? `<i class="fin-bar"><i style="width:${pct}%" class="${it.spent > it.amount ? 'over' : ''}"></i></i>` : ''}${extra}</span>
+        <b class="fin-amt ${it.g === 'in' ? 'pos' : ''}">${eur(it.amount)}</b></div>`;
     };
     const groups = [['in', 'Einnahmen'], ['out', 'Ausgaben privat'], ['biz', 'Ausgaben geschäftlich'], ['save', 'Sparen & Anlegen']].map(([g, label]) => {
       const list = items.filter(it => it.g === g).sort((a, b) => a.done - b.done || b.amount - a.amount);
@@ -849,7 +866,7 @@
       const n = list.filter(it => it.done).length;
       return `<h3 class="fin-sub">${label} · ${n} von ${list.length} erledigt · offen ${eur0(list.reduce((s, it) => s + openOf(it), 0))}</h3><div class="list fin-mlist">${list.map(row).join('')}</div>`;
     }).join('');
-    const unmatched = inMonth.filter(t => t.amount < 0 && !items.some(it => (it.hit && it.hit.id === t.id) || (it.cat && it.cat.name === t.cat)) && t.g !== 'skip' && t.g !== 'prop').sort((a, b) => a.amount - b.amount).slice(0, 8);
+    const unmatched = inMonth.filter(t => t.amount < 0 && !items.some(it => (it.hit && it.hit.id === t.id) || (it.cat && it.cat.name === t.cat) || it.links.some(l => l.id === t.id)) && t.g !== 'skip' && t.g !== 'prop').sort((a, b) => a.amount - b.amount).slice(0, 20);
     return `<h2 class="ct-h">${MONTHS_LONG[+key.slice(5, 7) - 1]} ${key.slice(0, 4)}</h2>
       <section class="fin-kpis">
         <div><span>Frei verfügbar heute</span><b>${eur0(free)}</b><small>Konten ohne Steuerkonto${w.tax ? ` (${eur0(w.tax)})` : ''}</small></div>
@@ -860,7 +877,13 @@
       </section>
       <p class="hint">${last ? `Abgleich mit den Buchungen bis ${fmtD(last)}.` : `Für ${MONTHS_LONG[+key.slice(5, 7) - 1]} sind noch keine Buchungen eingelesen${lastAny ? ` (letzte vom ${fmtD(lastAny)})` : ''}.`} Für einen frischen Stand den Finanzguru-Export unter Übersicht → „Datei einlesen“ laden. Erkannt wird über ein Suchwort (in den Standard-Ausgaben unter Vorschau) oder den Namen und den Betrag; was nicht erkannt wird, hakst du von Hand ab. Am 1. beginnt jeder Monat wieder offen.</p>
       ${items.length ? groups : `<section class="set"><p class="hint">Noch keine Standard-Posten. Unter Finanzen → Vorschau → „Standard-Ausgaben pro Monat“ anlegen.</p></section>`}
-      ${unmatched.length ? `<details class="set fin-assets"><summary>Größte Ausgaben diesen Monat ohne Standard-Posten (${unmatched.length})</summary><div class="list">${unmatched.map(t => `<div class="fin-row"><div class="fin-main"><b>${esc(t.payee || t.text || 'Ohne Namen')}</b><small>${fmtD(t.date)}${t.cat ? ' · ' + esc(t.cat) : ''}</small></div><b class="fin-amt neg">${eur(t.amount)}</b></div>`).join('')}</div></details>` : ''}`;
+      ${unmatched.length ? `<details class="set fin-assets" open><summary>Ausgaben diesen Monat ohne Standard-Posten (${unmatched.length})</summary>
+        <p class="hint">Einem Posten oben zuordnen (er gilt dann als abgebucht und wird nächsten Monat von selbst erkannt) oder direkt als neuen Standard-Posten übernehmen.</p>
+        <div class="list">${unmatched.map(t => `<div class="fin-row fin-unm"><div class="fin-main"><b>${esc(t.payee || t.text || 'Ohne Namen')}</b><small>${fmtD(t.date)}${t.cat ? ' · ' + esc(t.cat) : ''}</small></div><b class="fin-amt neg">${eur(t.amount)}</b>
+          <select data-fin="assign" data-tx="${esc(t.id)}" data-month="${key}" aria-label="Buchung zuordnen"><option value="">Zuordnen …</option>
+            <optgroup label="Als neuer Standard-Posten"><option value="new:out">＋ privat</option><option value="new:biz">＋ geschäftlich</option><option value="new:save">＋ Sparen & Anlegen</option></optgroup>
+            ${items.filter(it => it.g !== 'in' && !it.hit).length ? `<optgroup label="Zu offenem Posten">${items.filter(it => it.g !== 'in' && !it.hit).map(it => `<option value="${esc(it.id)}">${esc(it.name)} (${eur0(it.amount)})</option>`).join('')}</optgroup>` : ''}
+          </select></div>`).join('')}</div></details>` : ''}`;
   }
 
   function partView(main, part) {
@@ -1023,6 +1046,25 @@
       ui.msg = `${name}: ${eur0(Math.abs(amount))} ${EVERY[every][0]} gespeichert.`;
       S.saveFmeta({ ...(old || {}), type: 'budget', name, amount: Math.abs(amount), g: field('g').value, every, date: every === 'month' ? '' : date, ...(field('match') ? { match: field('match').value.trim() } : {}) });
     } else if (a === 'budget-del') { ui.budgetOpen = true; S.deleteFmeta(b.dataset.id); }
+    else if (a === 'mspend-add') {
+      const box = b.closest('.fin-spend');
+      const amount = parseEuro(box.querySelector('[data-k="spend"]').value);
+      if (!amount) { ui.msg = 'Bitte einen Betrag eintragen.'; rerender(); return; }
+      const note = box.querySelector('[data-k="note"]').value.trim();
+      ui.msg = `${eur(Math.abs(amount))}${note ? ` (${note})` : ''} eingetragen. Kommt die Buchung später mit dem Export, den Betrag hier wieder löschen.`;
+      S.saveFmeta({ type: 'mspend', month: b.dataset.month, ref: b.dataset.ref, amount: Math.abs(amount), note });
+    } else if (a === 'mspend-del') S.deleteFmeta(b.dataset.id);
+    else if (a === 'budget-split') {
+      // halbieren und als zweiten Posten anlegen – danach Namen und Beträge anpassen
+      const o = budgetEntries().find(x => x.id === b.dataset.id);
+      if (!o) return;
+      const half = Math.round(o.amount / 2);
+      const { id, updatedAt, ...rest } = o; // eslint-disable-line no-unused-vars
+      ui.budgetOpen = true;
+      ui.msg = `„${o.name}“ aufgeteilt – jetzt beide Namen und Beträge anpassen (z. B. Finanzierung und Versicherung).`;
+      S.saveFmeta({ ...o, amount: o.amount - half });
+      S.saveFmeta({ ...rest, name: `${o.name} (2)`, amount: half, match: '' });
+    }
     else if (a === 'budget-paste') {
       const items = parseBudgetLines(b.closest('details').querySelector('[data-k="paste"]').value);
       ui.budgetOpen = true;
@@ -1100,6 +1142,32 @@
   document.addEventListener('change', async ev => {
     const el = ev.target;
     if (!el.closest || !el.closest('.fin') || !el.dataset.fin) return;
+    if (el.dataset.fin === 'assign' && el.value) {
+      const t = S.finance.find(x => x.id === el.dataset.tx);
+      if (!t) return;
+      const payee = String(t.payee || t.text || 'Ausgabe').trim();
+      const word = tokens(payee)[0] || '';
+      if (el.value.startsWith('new:')) {
+        const g = el.value.slice(4);
+        ui.msg = `„${payee}“ mit ${eur0(Math.abs(t.amount))} im Monat als Standard-Posten übernommen – Name und Betrag kannst du unter Vorschau anpassen.`;
+        S.saveFmeta({ type: 'budget', name: payee.slice(0, 60), amount: Math.abs(t.amount), g, every: 'month', date: '', match: word });
+      } else {
+        const ref = el.value, id = `mc-${el.dataset.month}-${ref}`;
+        const bud = budgetEntries().find(x => x.id === ref);
+        const target = monthStatus(el.dataset.month, enriched().filter(x => x.kind !== 'summary')).items.find(x => x.id === ref);
+        if (target && target.variable) {
+          // variabler Posten (z. B. Lebensmittel): Buchung zählt zum Verbrauch, der Posten bleibt offen
+          ui.msg = `„${payee}“ zählt jetzt zu „${target.name}“.`;
+          S.saveFmeta({ id: `ml-${t.id}`, type: 'mlink', month: el.dataset.month, ref, tx: t.id });
+          return;
+        }
+        // Suchwort merken, damit die Buchung nächsten Monat von selbst erkannt wird
+        if (bud && !bud.match && word) S.saveFmeta({ ...bud, match: word });
+        ui.msg = `„${payee}“ zugeordnet${bud ? ` zu „${bud.name}“` : ''}.`;
+        S.saveFmeta({ ...(S.fmeta.find(m => m.id === id) || {}), id, type: 'mcheck', month: el.dataset.month, ref, done: true, tx: t.id });
+      }
+      return;
+    }
     if (el.dataset.fin === 'mcheck') {
       const id = `mc-${el.dataset.month}-${el.dataset.ref}`;
       S.saveFmeta({ ...(S.fmeta.find(m => m.id === id) || {}), id, type: 'mcheck', month: el.dataset.month, ref: el.dataset.ref, done: el.checked });

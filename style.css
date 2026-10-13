@@ -780,3 +780,9 @@ img.missing { opacity: .35; }
 .fin-bar { display: block; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; margin-top: 3px; max-width: 260px; }
 .fin-bar > i { display: block; height: 100%; background: var(--ok); }
 .fin-bar > i.over { background: var(--danger); }
+.fin-spend { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+.fin-spend input { height: 34px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 0 10px; font-size: 15px; width: 90px; min-width: 0; }
+.fin-spend input[data-k="note"] { width: 140px; }
+.fin-x { border: 0; background: none; color: var(--ink-3); cursor: pointer; font-size: 14px; padding: 0 2px; }
+.fin-unm { flex-wrap: wrap; }
+.fin-unm select { height: 34px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 0 8px; font-size: 14px; }
