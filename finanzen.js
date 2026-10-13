@@ -866,7 +866,8 @@
       const n = list.filter(it => it.done).length;
       return `<h3 class="fin-sub">${label} · ${n} von ${list.length} erledigt · offen ${eur0(list.reduce((s, it) => s + openOf(it), 0))}</h3><div class="list fin-mlist">${list.map(row).join('')}</div>`;
     }).join('');
-    const unmatched = inMonth.filter(t => t.amount < 0 && !items.some(it => (it.hit && it.hit.id === t.id) || (it.cat && it.cat.name === t.cat) || it.links.some(l => l.id === t.id)) && t.g !== 'skip' && t.g !== 'prop').sort((a, b) => a.amount - b.amount).slice(0, 20);
+    const ignored = new Set(S.fmeta.filter(m => m.type === 'mignore' && m.month === key).map(m => m.tx));
+    const unmatched = inMonth.filter(t => t.amount < 0 && !ignored.has(t.id) && !items.some(it => (it.hit && it.hit.id === t.id) || (it.cat && it.cat.name === t.cat) || it.links.some(l => l.id === t.id)) && t.g !== 'skip' && t.g !== 'prop').sort((a, b) => a.amount - b.amount).slice(0, 20);
     return `<h2 class="ct-h">${MONTHS_LONG[+key.slice(5, 7) - 1]} ${key.slice(0, 4)}</h2>
       <section class="fin-kpis">
         <div><span>Frei verfügbar heute</span><b>${eur0(free)}</b><small>Konten ohne Steuerkonto${w.tax ? ` (${eur0(w.tax)})` : ''}</small></div>
@@ -878,9 +879,9 @@
       <p class="hint">${last ? `Abgleich mit den Buchungen bis ${fmtD(last)}.` : `Für ${MONTHS_LONG[+key.slice(5, 7) - 1]} sind noch keine Buchungen eingelesen${lastAny ? ` (letzte vom ${fmtD(lastAny)})` : ''}.`} Für einen frischen Stand den Finanzguru-Export unter Übersicht → „Datei einlesen“ laden. Erkannt wird über ein Suchwort (in den Standard-Ausgaben unter Vorschau) oder den Namen und den Betrag; was nicht erkannt wird, hakst du von Hand ab. Am 1. beginnt jeder Monat wieder offen.</p>
       ${items.length ? groups : `<section class="set"><p class="hint">Noch keine Standard-Posten. Unter Finanzen → Vorschau → „Standard-Ausgaben pro Monat“ anlegen.</p></section>`}
       ${unmatched.length ? `<details class="set fin-assets" open><summary>Ausgaben diesen Monat ohne Standard-Posten (${unmatched.length})</summary>
-        <p class="hint">Einem Posten oben zuordnen (er gilt dann als abgebucht und wird nächsten Monat von selbst erkannt) oder direkt als neuen Standard-Posten übernehmen.</p>
+        <p class="hint">Einem Posten oben zuordnen (er gilt dann als abgebucht und wird nächsten Monat von selbst erkannt), direkt als neuen Standard-Posten übernehmen oder als einmalige Ausgabe ausblenden. Versehentlich angelegte Standard-Posten löschst du unter Vorschau → Standard-Ausgaben mit dem Papierkorb.</p>
         <div class="list">${unmatched.map(t => `<div class="fin-row fin-unm"><div class="fin-main"><b>${esc(t.payee || t.text || 'Ohne Namen')}</b><small>${fmtD(t.date)}${t.cat ? ' · ' + esc(t.cat) : ''}</small></div><b class="fin-amt neg">${eur(t.amount)}</b>
-          <select data-fin="assign" data-tx="${esc(t.id)}" data-month="${key}" aria-label="Buchung zuordnen"><option value="">Zuordnen …</option>
+          <select data-fin="assign" data-tx="${esc(t.id)}" data-month="${key}" aria-label="Buchung zuordnen"><option value="">Zuordnen …</option><option value="ignore">Einmalig – ausblenden</option>
             <optgroup label="Als neuer Standard-Posten"><option value="new:out">＋ privat</option><option value="new:biz">＋ geschäftlich</option><option value="new:save">＋ Sparen & Anlegen</option></optgroup>
             ${items.filter(it => it.g !== 'in' && !it.hit).length ? `<optgroup label="Zu offenem Posten">${items.filter(it => it.g !== 'in' && !it.hit).map(it => `<option value="${esc(it.id)}">${esc(it.name)} (${eur0(it.amount)})</option>`).join('')}</optgroup>` : ''}
           </select></div>`).join('')}</div></details>` : ''}`;
@@ -1147,6 +1148,12 @@
       if (!t) return;
       const payee = String(t.payee || t.text || 'Ausgabe').trim();
       const word = tokens(payee)[0] || '';
+      if (el.value === 'ignore') {
+        // einmalige Ausgabe (z. B. Urlaub): nur aus der Liste nehmen, kein Standard-Posten
+        ui.msg = `„${payee}“ ausgeblendet.`;
+        S.saveFmeta({ id: `mi-${t.id}`, type: 'mignore', month: el.dataset.month, tx: t.id });
+        return;
+      }
       if (el.value.startsWith('new:')) {
         const g = el.value.slice(4);
         ui.msg = `„${payee}“ mit ${eur0(Math.abs(t.amount))} im Monat als Standard-Posten übernommen – Name und Betrag kannst du unter Vorschau anpassen.`;
