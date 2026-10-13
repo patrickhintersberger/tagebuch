@@ -1189,9 +1189,9 @@
   }
 
   // ---------- Rahmen ----------
-  const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags, countries: viewCountries, habits: viewHabits, bucket: viewBucket, life: viewLife, finanzen: main => { window.TB_FINANZEN.view(main); ui.built = 'finanzen'; },
+  const views = { timeline: viewTimeline, calendar: viewCalendar, memories: viewMemories, attachments: viewAttachments, tags: viewTags, countries: viewCountries, habits: viewHabits, bucket: viewBucket, life: viewLife, finanzen: main => { window.TB_FINANZEN.view(main, 'uebersicht'); ui.built = 'finanzen'; }, 'fin-monat': main => { window.TB_FINANZEN.view(main, 'monat'); ui.built = 'fin-monat'; }, 'fin-vorschau': main => { window.TB_FINANZEN.view(main, 'vorschau'); ui.built = 'fin-vorschau'; },
     ...Object.fromEntries(Object.keys(window.TB_IDENTITAET.VIEWS).map(k => [k, main => { window.TB_IDENTITAET.view(main, k); ui.built = k; }])), templates: viewTemplates, share: viewShare };
-  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', travel: 'Reisekarte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten', bucket: 'Bucket-Liste', life: 'Lebenszeit', finanzen: 'Finanzen', ...Object.fromEntries(Object.entries(window.TB_IDENTITAET.VIEWS).map(([k, v]) => [k, v[0]])), templates: 'Vorlagen', share: 'Reisen freigeben' };
+  const TITLES = { calendar: 'Kalender', timeline: 'Zeitleiste', map: 'Karte', travel: 'Reisekarte', attachments: 'Anhänge', tags: 'Tags', countries: 'Länderzähler', memories: 'An diesem Tag', habits: 'Gewohnheiten', bucket: 'Bucket-Liste', life: 'Lebenszeit', finanzen: 'Finanzen', 'fin-monat': 'Aktueller Monat', 'fin-vorschau': 'Finanz-Vorschau', ...Object.fromEntries(Object.entries(window.TB_IDENTITAET.VIEWS).map(([k, v]) => [k, v[0]])), templates: 'Vorlagen', share: 'Reisen freigeben' };
   function render() {
     $$('#nav [data-nav]').forEach(b => b.setAttribute('aria-current', b.dataset.nav === ui.view ? 'page' : 'false'));
     const isMap = ui.view === 'map';

@@ -662,6 +662,7 @@
         <select data-k="g" aria-label="Art">${BUDGET_G.map(([g, l]) => `<option value="${g}"${b.g === g ? ' selected' : ''}>${l}</option>`).join('')}</select>
         <select data-k="every" aria-label="Rhythmus">${['month', 'quarter', 'year'].map(k => `<option value="${k}"${(b.every || 'month') === k ? ' selected' : ''}>${EVERY[k][0]}</option>`).join('')}</select>
         <input type="date" data-k="date" value="${esc(b.date || '')}" aria-label="Nächste Fälligkeit" title="Bei vierteljährlich und jährlich: wann fällig">
+        <input type="text" data-k="match" value="${esc(b.match || '')}" placeholder="Suchwort für Abgleich" aria-label="Suchwort für den Abgleich mit den Buchungen" title="Teil des Empfängers in den Buchungen, z. B. „Santander“">
         <span class="fin-acts"><button class="btn small" data-fin="budget-save">Speichern</button>
         <button class="icon-btn" data-fin="budget-del" data-id="${esc(b.id)}" aria-label="${esc(b.name)} löschen">${ms('delete')}</button></span></div>`;
     const budgetForm = `<details class="set fin-assets"${ui.budgetOpen ? ' open' : ''}><summary data-fin="budget-toggle">Standard-Ausgaben pro Monat (${f.budgets.length}${f.budgets.length ? ` · ${eur0(f.budgets.reduce((t, b) => t + (b.g === 'in' ? -1 : 1) * perMonth(b), 0))} im Monat nach festen Einnahmen` : ''})</summary>
@@ -760,7 +761,7 @@
   }
 
   // ---------- Auswertung ----------
-  const ui = { year: String(new Date().getFullYear()), month: null, filter: 'open', msg: '', busy: false, assetsOpen: false, plansOpen: false, budgetOpen: false, taxOpen: false };
+  const ui = { part: 'uebersicht', year: String(new Date().getFullYear()), month: null, filter: 'open', msg: '', busy: false, assetsOpen: false, plansOpen: false, budgetOpen: false, taxOpen: false };
 
   function enriched() {
     return S.finance.map(t => {
@@ -770,7 +771,117 @@
     });
   }
 
-  function view(main) {
+  // ---------- Aktueller Monat ----------
+  // Standard-Posten (Liste) und geplante Posten dieses Monats zum Abhaken. Abgleich mit den eingelesenen Buchungen:
+  // Suchwort (oder Namensteil) in Empfänger/Text und Betrag ±30 %, oder genau derselbe Betrag (±1 €). Variable Posten
+  // wie Lebensmittel zeigen, was in der passenden Kategorie schon verbraucht ist. Haken von Hand je Monat in fmeta
+  // {id: 'mc-<Monat>-<Posten>', type: 'mcheck', month, ref, done}; am 1. beginnt jeder Monat wieder offen.
+  const STOP = new Set(['und', 'inkl', 'konto', 'kredit', 'miete', 'auto', 'versicherung', 'versicherungen', 'automatisch', 'sprit', 'hausgeld', 'mama']);
+  const tokens = str => norm(str).replace(/[^a-z0-9äöüß ]/g, ' ').split(' ').filter(w => w.length >= 4 && !STOP.has(w));
+  function dueInMonth(b, key) {
+    if (b.every === 'month' || !b.date) return true;
+    const every = (EVERY[b.every] || EVERY.month)[1] || 1;
+    const start = b.date.slice(0, 7);
+    const diff = (+key.slice(0, 4) - +start.slice(0, 4)) * 12 + (+key.slice(5, 7) - +start.slice(5, 7));
+    return ((diff % every) + every) % every === 0;
+  }
+  function monthStatus(key, tx) {
+    const inMonth = tx.filter(t => t.date.slice(0, 7) === key);
+    const used = new Set();
+    const checks = {};
+    S.fmeta.filter(m => m.type === 'mcheck' && m.month === key).forEach(m => { checks[m.ref] = m; });
+    const posts = [
+      ...budgetEntries().filter(b => dueInMonth(b, key)).map(b => ({ id: b.id, name: b.name, g: b.g, amount: b.amount, match: b.match, every: b.every, plan: false })),
+      ...planEntries().filter(p => p.date.slice(0, 7) <= key && planHits(p, key, key + '-01')).map(p => ({ id: p.id, name: p.name, g: p.amount < 0 ? 'out' : 'in', amount: Math.abs(p.amount), match: p.match, plan: true })),
+    ];
+    const items = posts.map(it => {
+      const sign = it.g === 'in' ? 1 : -1;
+      const words = it.match ? [norm(it.match)] : tokens(it.name);
+      const text = t => norm([t.payee, t.text, t.note].filter(Boolean).join(' '));
+      const near = (t, tol) => Math.abs(Math.abs(t.amount) - it.amount) <= Math.max(100, it.amount * tol);
+      const cands = inMonth.filter(t => !used.has(t.id) && Math.sign(t.amount) === sign);
+      let hit = words.length ? cands.find(t => words.some(w => text(t).includes(w)) && near(t, 0.3)) : null;
+      if (!hit) hit = cands.find(t => near(t, 0) && Math.abs(Math.abs(t.amount) - it.amount) <= 100);
+      if (hit) used.add(hit.id);
+      // variable Posten: passende Kategorie (z. B. „Lebensmittel“ → „Lebensmittel (Supermarkteinkäufe)“)
+      const cat = !hit && it.name.length >= 5 ? CATS.find(c => norm(c.name).startsWith(norm(it.name))) : null;
+      const spent = cat ? -inMonth.filter(t => t.cat === cat.name).reduce((s, t) => s + t.amount, 0) : null;
+      const manual = checks[it.id];
+      const done = manual ? !!manual.done : !!hit;
+      return { ...it, hit, cat, spent, manual, done };
+    });
+    return { items, inMonth };
+  }
+
+  function monthView(tx, index, meta) {
+    const today = todayISO();
+    const key = today.slice(0, 7);
+    const { items, inMonth } = monthStatus(key, tx);
+    const w = worthAt(index, today, meta);
+    const last = inMonth.reduce((m, t) => (t.date > m ? t.date : m), '');
+    const lastAny = tx.reduce((m, t) => (t.date > m ? t.date : m), '');
+    // offen: nicht abgehakte Posten; bei variablen nur der noch nicht verbrauchte Rest
+    const openOf = it => (it.done ? 0 : it.spent != null ? Math.max(0, it.amount - it.spent) : it.amount);
+    const sumG = (gs, f) => items.filter(it => gs.includes(it.g)).reduce((s, it) => s + f(it), 0);
+    const openOut = sumG(['out', 'biz', 'save'], openOf);
+    const openIn = sumG(['in'], openOf);
+    const planOut = sumG(['out', 'biz', 'save'], it => it.amount);
+    const doneOut = planOut - openOut;
+    const free = w.liquid - w.tax;
+    const left = free + openIn - openOut;
+    const fmtD = d => new Date(d).toLocaleDateString('de-DE');
+    const row = it => {
+      const status = it.manual
+        ? (it.done ? 'von Hand abgehakt' : 'von Hand offen')
+        : it.hit ? `${it.g === 'in' ? 'eingegangen' : 'abgebucht'} ${fmtD(it.hit.date)} · ${eur(Math.abs(it.hit.amount))} · ${esc(it.hit.payee || it.hit.text || '')}`
+          : it.spent != null ? `verbraucht ${eur0(it.spent)} von ${eur0(it.amount)} · noch ${eur0(Math.max(0, it.amount - it.spent))}`
+            : 'offen';
+      const pct = it.spent != null && !it.done ? Math.min(100, Math.round((it.spent / Math.max(1, it.amount)) * 100)) : null;
+      return `<label class="fin-mrow${it.done ? ' done' : ''}">
+        <input type="checkbox" data-fin="mcheck" data-ref="${esc(it.id)}" data-month="${key}" ${it.done ? 'checked' : ''}>
+        <span class="fin-main"><b>${esc(it.name)}${it.plan ? ' <small class="fin-tag">geplant</small>' : ''}${it.every && it.every !== 'month' ? ` <small class="fin-tag">${EVERY[it.every][0]}</small>` : ''}</b><small>${status}</small>
+        ${pct !== null ? `<i class="fin-bar"><i style="width:${pct}%" class="${it.spent > it.amount ? 'over' : ''}"></i></i>` : ''}</span>
+        <b class="fin-amt ${it.g === 'in' ? 'pos' : ''}">${eur(it.amount)}</b></label>`;
+    };
+    const groups = [['in', 'Einnahmen'], ['out', 'Ausgaben privat'], ['biz', 'Ausgaben geschäftlich'], ['save', 'Sparen & Anlegen']].map(([g, label]) => {
+      const list = items.filter(it => it.g === g).sort((a, b) => a.done - b.done || b.amount - a.amount);
+      if (!list.length) return '';
+      const n = list.filter(it => it.done).length;
+      return `<h3 class="fin-sub">${label} · ${n} von ${list.length} erledigt · offen ${eur0(list.reduce((s, it) => s + openOf(it), 0))}</h3><div class="list fin-mlist">${list.map(row).join('')}</div>`;
+    }).join('');
+    const unmatched = inMonth.filter(t => t.amount < 0 && !items.some(it => (it.hit && it.hit.id === t.id) || (it.cat && it.cat.name === t.cat)) && t.g !== 'skip' && t.g !== 'prop').sort((a, b) => a.amount - b.amount).slice(0, 8);
+    return `<h2 class="ct-h">${MONTHS_LONG[+key.slice(5, 7) - 1]} ${key.slice(0, 4)}</h2>
+      <section class="fin-kpis">
+        <div><span>Frei verfügbar heute</span><b>${eur0(free)}</b><small>Konten ohne Steuerkonto${w.tax ? ` (${eur0(w.tax)})` : ''}</small></div>
+        <div><span>Schon abgebucht</span><b>${eur0(doneOut)}</b><small>von ${eur0(planOut)} geplant</small></div>
+        <div><span>Noch offen</span><b class="${openOut ? 'bad' : 'ok'}">${eur0(openOut)}</b><small>Ausgaben bis Monatsende</small></div>
+        <div><span>Noch erwartet</span><b>${eur0(openIn)}</b><small>feste Einnahmen</small></div>
+        <div><span>Übrig zum Monatsende</span><b class="${left >= 0 ? 'ok' : 'bad'}">${eur0(left)}</b><small>frei + erwartet − offen</small></div>
+      </section>
+      <p class="hint">${last ? `Abgleich mit den Buchungen bis ${fmtD(last)}.` : `Für ${MONTHS_LONG[+key.slice(5, 7) - 1]} sind noch keine Buchungen eingelesen${lastAny ? ` (letzte vom ${fmtD(lastAny)})` : ''}.`} Für einen frischen Stand den Finanzguru-Export unter Übersicht → „Datei einlesen“ laden. Erkannt wird über ein Suchwort (in den Standard-Ausgaben unter Vorschau) oder den Namen und den Betrag; was nicht erkannt wird, hakst du von Hand ab. Am 1. beginnt jeder Monat wieder offen.</p>
+      ${items.length ? groups : `<section class="set"><p class="hint">Noch keine Standard-Posten. Unter Finanzen → Vorschau → „Standard-Ausgaben pro Monat“ anlegen.</p></section>`}
+      ${unmatched.length ? `<details class="set fin-assets"><summary>Größte Ausgaben diesen Monat ohne Standard-Posten (${unmatched.length})</summary><div class="list">${unmatched.map(t => `<div class="fin-row"><div class="fin-main"><b>${esc(t.payee || t.text || 'Ohne Namen')}</b><small>${fmtD(t.date)}${t.cat ? ' · ' + esc(t.cat) : ''}</small></div><b class="fin-amt neg">${eur(t.amount)}</b></div>`).join('')}</div></details>` : ''}`;
+  }
+
+  function partView(main, part) {
+    const all = enriched();
+    const tx = all.filter(t => t.kind !== 'summary');
+    const sums = all.filter(t => t.kind === 'summary');
+    const nm = new Set(sums.map(t => t.date.slice(0, 7)));
+    const counted = [...sums, ...tx.filter(t => !nm.has(t.date.slice(0, 7)))];
+    const index = balanceIndex(tx), meta = acctMeta();
+    const title = part === 'monat' ? 'Aktueller Monat' : 'Vorschau';
+    const sub = part === 'monat' ? 'Standard-Posten abhaken und abgleichen' : 'Kontostand der nächsten Monate, Standard-Ausgaben und was du verdienen musst';
+    main.innerHTML = `<div class="page fin">
+      <header class="page-head"><div><h1>Finanzen · ${title}</h1><p>${sub}</p></div></header>
+      ${ui.msg ? `<p class="fin-msg">${esc(ui.msg)}</p>` : ''}
+      ${part === 'monat' ? monthView(tx, index, meta) : forecastView(counted, index, meta)}
+    </div>`;
+  }
+
+  function view(main, part) {
+    ui.part = part || ui.part || 'uebersicht';
+    if (ui.part !== 'uebersicht') return partView(main, ui.part);
     const all = enriched();
     const tx = all.filter(t => t.kind !== 'summary');
     const sums = all.filter(t => t.kind === 'summary');
@@ -834,7 +945,7 @@
     const how = { hand: 'von Hand', regel: 'Regel', finanzguru: 'Finanzguru', auto: 'automatisch' };
 
     main.innerHTML = `<div class="page fin">
-      <header class="page-head row"><div><h1>Finanzen</h1><p>Einnahmen und Ausgaben · ${esc(period)}</p></div>
+      <header class="page-head row"><div><h1>Finanzen · Übersicht</h1><p>Einnahmen und Ausgaben · ${esc(period)}</p></div>
         <label class="btn ghost fin-import">${ms('upload')} ${ui.busy ? 'Liest ein …' : 'Datei einlesen'}<input type="file" accept=".csv,.xlsx,.xls,text/csv" multiple hidden data-fin="import"></label></header>
       ${ui.msg ? `<p class="fin-msg">${esc(ui.msg)}</p>` : ''}
       ${!all.length ? `<section class="set"><h3>Noch keine Buchungen</h3><p class="hint">Lies den Finanzguru-Export (Excel) oder eine CSV aus dem Online-Banking über „Datei einlesen“ ein. Mehrfaches Einlesen erzeugt keine doppelten Buchungen.</p></section>` : `
@@ -849,7 +960,6 @@
       </section>
       ${saved || prop ? `<p class="hint">${[saved ? `Gespart und angelegt: ${eur0(saved)}` : '', prop ? `Immobilie (Kauf & Umbau über Kredit, nicht in den Ausgaben): ${eur0(prop)}` : ''].filter(Boolean).join(' · ')}.</p>` : ''}
       ${wealthView(tx)}
-      ${forecastView(counted, balanceIndex(tx), acctMeta())}
       <h2 class="ct-h">Monate ${esc(ui.year)}</h2>
       ${chart(yearRows)}
       <h2 class="ct-h">Jahresübersicht ${esc(ui.year)}</h2>
@@ -868,7 +978,7 @@
   }
 
   // ---------- Bedienung ----------
-  function rerender() { const main = $('#main'); if (main && $('.fin', main)) view(main); }
+  function rerender() { const main = $('#main'); if (main && $('.fin', main)) view(main, ui.part); }
   document.addEventListener('click', ev => {
     const b = ev.target.closest('[data-fin]');
     if (!b || !b.closest('.fin')) return;
@@ -911,7 +1021,7 @@
       if (every !== 'month' && !date) { ui.msg = 'Bei vierteljährlich und jährlich bitte das Datum der nächsten Zahlung eintragen.'; rerender(); return; }
       const old = a === 'budget-save' ? budgetEntries().find(x => x.id === row.dataset.id) : null;
       ui.msg = `${name}: ${eur0(Math.abs(amount))} ${EVERY[every][0]} gespeichert.`;
-      S.saveFmeta({ ...(old || {}), type: 'budget', name, amount: Math.abs(amount), g: field('g').value, every, date: every === 'month' ? '' : date });
+      S.saveFmeta({ ...(old || {}), type: 'budget', name, amount: Math.abs(amount), g: field('g').value, every, date: every === 'month' ? '' : date, ...(field('match') ? { match: field('match').value.trim() } : {}) });
     } else if (a === 'budget-del') { ui.budgetOpen = true; S.deleteFmeta(b.dataset.id); }
     else if (a === 'budget-paste') {
       const items = parseBudgetLines(b.closest('details').querySelector('[data-k="paste"]').value);
@@ -990,6 +1100,11 @@
   document.addEventListener('change', async ev => {
     const el = ev.target;
     if (!el.closest || !el.closest('.fin') || !el.dataset.fin) return;
+    if (el.dataset.fin === 'mcheck') {
+      const id = `mc-${el.dataset.month}-${el.dataset.ref}`;
+      S.saveFmeta({ ...(S.fmeta.find(m => m.id === id) || {}), id, type: 'mcheck', month: el.dataset.month, ref: el.dataset.ref, done: el.checked });
+      return;
+    }
     if (el.dataset.fin === 'fc-tax') { const fc = loadFc(); fc.tax = Math.min(60, Math.max(0, +el.value || 0)); saveFc(fc); rerender(); return; }
     if (el.dataset.fin === 'fc-save') { const fc = loadFc(); fc.save = el.checked; saveFc(fc); rerender(); return; }
     if (el.dataset.fin === 'cat') {
@@ -1012,5 +1127,5 @@
     }
   });
 
-  window.TB_FINANZEN = { view, CATS, _test: { parseCSV, toCents, toISO, categorize, rowsToFinance, balanceIndex, balancesAt, worthAt, parseEuro, forecast, planHits, parseBudgetLines, needed, taxesFor, estTarif, profitLast12 } };
+  window.TB_FINANZEN = { view, CATS, _test: { parseCSV, toCents, toISO, categorize, rowsToFinance, balanceIndex, balancesAt, worthAt, parseEuro, forecast, planHits, parseBudgetLines, needed, taxesFor, estTarif, profitLast12, monthStatus, dueInMonth } };
 })();
