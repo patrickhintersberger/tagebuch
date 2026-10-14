@@ -44,7 +44,8 @@
     [/\b(rewe|edeka|lidl|aldi|netto|kaufland|penny|norma|alnatura|tegut|globus|picnic|flink|getir)\b/, 'Lebensmittel (Supermarkteinkäufe)'],
     [/\b(lieferando|wolt|uber eats|mcdonald|burger king|restaurant|pizzeria|bäckerei|starbucks)\b/, 'Außer Haus essen / bestellen'],
     [/\b(spotify|netflix|disney|audible|dazn)\b/, 'Spotify, Netflix und Co.'],
-    [/\b(vodafone|telekom|congstar)\b/, 'Handyvertrag/Prepaid'],
+    [/\b(vodafone)\b/, 'Internet'], // wie in Finanzguru: Wohnen / Internet & Telefon
+    [/\b(congstar|telekom)\b/, 'Handyvertrag/Prepaid'],
     [/\b(versicherung)\b/, 'Versicherungen'],
     [/\b(rossmann|apotheke|docmorris)\b/, 'Gesundheit und Medikamente'],
     [/\b(obi|bauhaus|hornbach|toom)\b/, 'Bauen und Renovieren'],
@@ -778,9 +779,10 @@
   function guessAccount(a, names) {
     const n = normAcc(a.account);
     const digits = String(a.iban || '').replace(/\D/g, '');
-    return names.find(x => normAcc(x) === n)
+    // Nur eindeutige Treffer: gleicher Name oder Kontonummer in der IBAN. Banken melden als Namen oft nur den
+    // Kontoinhaber (z. B. „Patrick Hintersberger“) – ein Teilwort-Vergleich landete so beim PayPal-Konto.
+    return names.find(x => normAcc(x) === n && !x.includes('@'))
       || names.find(x => /^\d{6,}$/.test(x) && digits.endsWith(x.replace(/^0+/, '')))
-      || names.find(x => n && (normAcc(x).includes(n) || n.includes(normAcc(x))) && normAcc(x).length > 4)
       || '';
   }
   const mapAccount = (cfg, acc) => ((cfg && cfg.map) || {})[acc] || acc;
@@ -932,7 +934,8 @@
         - myLinks.filter(t => !cat || t.cat !== cat.name).reduce((s, t) => s + t.amount, 0) + mySpends.reduce((s, m) => s + m.amount, 0) : null;
       const manual = checks[it.id];
       const done = manual ? !!manual.done : !!hit;
-      return { ...it, hit, cat, variable, spent, links: myLinks, spends: mySpends, manual, done };
+      const catTx = variable && cat ? inMonth.filter(t => t.cat === cat.name && !links.some(l => l.tx === t.id && l.ref !== it.id)) : [];
+      return { ...it, hit, cat, variable, spent, links: myLinks, spends: mySpends, catTx, manual, done };
     });
     return { items, inMonth };
   }
@@ -954,6 +957,16 @@
     const free = w.liquid - w.tax;
     const left = free + openIn - openOut;
     const fmtD = d => new Date(d).toLocaleDateString('de-DE');
+    // Woraus sich ein Verbrauch zusammensetzt: Buchungen der Kategorie (mit Kategorie zum Ändern) und zugeordnete Buchungen
+    const catOptions = cur => `<option value="">Ohne Kategorie</option>${GROUPS.map(([g, label]) => `<optgroup label="${label}">${CATS.filter(c => c.g === g).map(c => `<option${c.name === cur ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</optgroup>`).join('')}`;
+    const txList = it => {
+      const list = [...it.catTx, ...it.links.filter(t => !it.catTx.includes(t))].sort((a, b) => a.date.localeCompare(b.date));
+      if (!list.length) return '';
+      return `<details class="fin-mtxs"><summary>${list.length} ${list.length === 1 ? 'Buchung' : 'Buchungen'}${it.cat ? ` aus „${esc(it.cat.name)}“` : ''}</summary>
+        ${list.map(t => `<div class="fin-mtx" data-id="${esc(t.id)}"><span>${fmtD(t.date)}</span><span class="fin-mtx-who">${esc(t.payee || t.text || 'Buchung')}${t.account ? `<small>${esc(t.account)}</small>` : ''}</span><b>${eur(-t.amount)}</b>
+          ${it.catTx.includes(t) ? `<select data-fin="cat" aria-label="Kategorie von ${esc(t.payee || 'Buchung')}">${catOptions(t.cat)}</select>` : '<small>zugeordnet</small>'}</div>`).join('')}
+        ${it.cat ? '<p class="hint">Gehört eine Buchung nicht dazu, gib ihr eine andere Kategorie. Für dieselbe Firma künftig immer: in der Übersicht „Immer so“.</p>' : ''}</details>`;
+    };
     const row = it => {
       const status = it.manual
         ? (it.done ? 'von Hand abgehakt' : 'von Hand offen')
@@ -968,7 +981,7 @@
       return `<div class="fin-mrow${it.done ? ' done' : ''}">
         <input type="checkbox" data-fin="mcheck" data-ref="${esc(it.id)}" data-month="${key}" ${it.done ? 'checked' : ''} aria-label="${esc(it.name)} erledigt">
         <span class="fin-main"><b>${esc(it.name)}${it.plan ? ' <small class="fin-tag">geplant</small>' : ''}${it.every && it.every !== 'month' ? ` <small class="fin-tag">${EVERY[it.every][0]}</small>` : ''}</b><small>${status}</small>
-        ${pct !== null ? `<i class="fin-bar"><i style="width:${pct}%" class="${it.spent > it.amount ? 'over' : ''}"></i></i>` : ''}${extra}</span>
+        ${pct !== null ? `<i class="fin-bar"><i style="width:${pct}%" class="${it.spent > it.amount ? 'over' : ''}"></i></i>` : ''}${extra}${txList(it)}</span>
         <b class="fin-amt ${it.g === 'in' ? 'pos' : ''}">${eur(it.amount)}</b></div>`;
     };
     const groups = [['in', 'Einnahmen'], ['out', 'Ausgaben privat'], ['biz', 'Ausgaben geschäftlich'], ['save', 'Sparen & Anlegen']].map(([g, label]) => {
@@ -1322,7 +1335,7 @@
     if (el.dataset.fin === 'fc-tax') { const fc = loadFc(); fc.tax = Math.min(60, Math.max(0, +el.value || 0)); saveFc(fc); rerender(); return; }
     if (el.dataset.fin === 'fc-save') { const fc = loadFc(); fc.save = el.checked; saveFc(fc); rerender(); return; }
     if (el.dataset.fin === 'cat') {
-      const t = S.finance.find(x => x.id === el.closest('.fin-row').dataset.id);
+      const t = S.finance.find(x => x.id === el.closest('.fin-row, .fin-mtx').dataset.id);
       if (t) { const n = { ...t }; if (el.value) n.cat = el.value; else delete n.cat; S.saveFinance([n], true); }
     } else if (el.dataset.fin === 'import') {
       const files = [...el.files];
