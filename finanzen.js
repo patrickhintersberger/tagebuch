@@ -768,8 +768,108 @@
   // ---------- Auswertung ----------
   const ui = { part: 'uebersicht', year: String(new Date().getFullYear()), month: null, filter: 'open', msg: '', busy: false, assetsOpen: false, plansOpen: false, budgetOpen: false, taxOpen: false };
 
+  // ---------- Bankabruf über das CRM (Enable Banking) ----------
+  // Commerzbank, HypoVereinsbank, Amex: das CRM holt die Umsätze alle 6 Stunden, Daily zieht sie beim Öffnen der Finanzen
+  // (höchstens alle 15 Minuten). Adresse und Schlüssel liegen im privaten Daten-Repo (fmeta '_bankabruf'), damit sie auf
+  // allen Geräten gelten. Jedes Bankkonto wird einem Konto in Daily zugeordnet (wie es im Finanzguru-Export heißt).
+  // Buchungen haben die ID eb-…; überschneiden sie sich mit einem Finanzguru-Export, gilt der Export.
+  const bankCfg = () => S.fmeta.find(m => m.id === '_bankabruf') || null;
+  const normAcc = s => String(s || '').toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').replace(/[^a-z0-9]/g, '');
+  function guessAccount(a, names) {
+    const n = normAcc(a.account);
+    const digits = String(a.iban || '').replace(/\D/g, '');
+    return names.find(x => normAcc(x) === n)
+      || names.find(x => /^\d{6,}$/.test(x) && digits.endsWith(x.replace(/^0+/, '')))
+      || names.find(x => n && (normAcc(x).includes(n) || n.includes(normAcc(x))) && normAcc(x).length > 4)
+      || '';
+  }
+  const mapAccount = (cfg, acc) => ((cfg && cfg.map) || {})[acc] || acc;
+  let pulling = false;
+  async function pullBank(force) {
+    const cfg = bankCfg();
+    if (!cfg || !cfg.url || !cfg.key || pulling) return null;
+    const last = +(localStorage.getItem('tb-bank-at') || 0);
+    if (!force && Date.now() - last < 15 * 60e3) return null;
+    pulling = true;
+    localStorage.setItem('tb-bank-at', String(Date.now()));
+    try {
+      const mine = S.finance.filter(t => t.id && t.id.startsWith('eb-'));
+      const newest = mine.reduce((m, t) => (t.date > m ? t.date : m), '');
+      const since = newest ? new Date(Date.parse(newest) - 10 * 864e5).toISOString().slice(0, 10) : new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
+      const res = await fetch(cfg.url.replace(/\/$/, '') + '?since=' + since, { headers: { Authorization: 'Bearer ' + cfg.key }, cache: 'no-store' });
+      if (res.status === 401) throw new Error('Der Schlüssel stimmt nicht. Im CRM unter Bank → „Bankabruf für Daily“ einen neuen erzeugen.');
+      if (!res.ok) throw new Error('Das CRM antwortet mit Fehler ' + res.status + '.');
+      const data = await res.json();
+      // Neue Bankkonten einmalig dem passenden bisherigen Konto zuordnen (lässt sich im Kasten ändern)
+      const names = [...new Set(S.finance.filter(t => t.account && !(t.id || '').startsWith('eb-')).map(t => t.account))];
+      const map = { ...(cfg.map || {}) };
+      let changed = false;
+      (data.accounts || []).forEach(a => { if (!(a.account in map)) { map[a.account] = guessAccount(a, names); changed = true; } });
+      if (changed) { S.saveFmeta({ ...cfg, map }); cfg.map = map; }
+      // Kontostände: vom aktuellen Saldo rückwärts durch die abgerufenen Buchungen
+      const bal = {};
+      (data.accounts || []).forEach(a => { if (a.balance != null) bal[a.account] = a.balance; });
+      const byAcc = {};
+      for (const t of data.tx || []) (byAcc[t.account] = byAcc[t.account] || []).push(t);
+      const list = [];
+      for (const [acc, txs] of Object.entries(byAcc)) {
+        txs.sort((a, b) => a.date.localeCompare(b.date));
+        let run = bal[acc];
+        for (let i = txs.length - 1; i >= 0; i--) {
+          const t = txs[i];
+          const item = { id: 'eb-' + t.id, date: t.date, amount: t.amount, payee: t.payee || '', text: t.text || '', account: mapAccount(cfg, acc), src: 'Bankabruf' };
+          if (run != null) { item.bal = run; run -= t.amount; }
+          list.push(item);
+        }
+      }
+      const have = new Map(S.finance.map(f => [f.id, f]));
+      const upd = list.filter(t => have.has(t.id) && (have.get(t.id).bal !== t.bal || have.get(t.id).account !== t.account)).map(t => ({ ...have.get(t.id), bal: t.bal, account: t.account }));
+      if (upd.length) S.saveFinance(upd, true);
+      const added = S.saveFinance(list.filter(t => !have.has(t.id)), false);
+      localStorage.setItem('tb-bank-status', JSON.stringify({ at: Date.now(), added, accounts: data.accounts || [] }));
+      return added;
+    } catch (e) {
+      localStorage.setItem('tb-bank-status', JSON.stringify({ ...(JSON.parse(localStorage.getItem('tb-bank-status') || '{}')), error: e.message === 'Failed to fetch' ? 'Das CRM ist nicht erreichbar (Adresse prüfen).' : e.message, errAt: Date.now() }));
+      return null;
+    } finally { pulling = false; }
+  }
+  // Bank-Buchungen, die schon aus einem Finanzguru-Export da sind (gleicher Betrag, gleiches Konto, bis 3 Tage Abstand)
+  function hiddenBank(list) {
+    const hide = new Set();
+    const eb = list.filter(t => t.id && t.id.startsWith('eb-'));
+    if (!eb.length) return hide;
+    const byAmt = new Map();
+    list.forEach(t => { if (t.kind !== 'summary' && t.id && !t.id.startsWith('eb-')) { if (!byAmt.has(t.amount)) byAmt.set(t.amount, []); byAmt.get(t.amount).push(t); } });
+    const used = new Set();
+    eb.forEach(t => {
+      const m = (byAmt.get(t.amount) || []).find(f => !used.has(f.id) && Math.abs(Date.parse(f.date) - Date.parse(t.date)) <= 3 * 864e5 && (!f.account || !t.account || f.account === t.account));
+      if (m) { used.add(m.id); hide.add(t.id); }
+    });
+    return hide;
+  }
+  function bankBox() {
+    const cfg = bankCfg() || {};
+    const st = JSON.parse(localStorage.getItem('tb-bank-status') || '{}');
+    const names = [...new Set(S.finance.filter(t => t.account && !(t.id || '').startsWith('eb-')).map(t => t.account))].sort();
+    const fmtDT = ms => new Date(ms).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
+    const accs = st.accounts || [];
+    return `<details class="set fin-assets fin-bank"${!cfg.key || st.error ? ' open' : ''}><summary>${ms('sync')} Automatischer Bankabruf${cfg.key ? (st.error ? ' · Fehler' : st.at ? ' · ' + fmtDT(st.at) : '') : ' · nicht eingerichtet'}</summary>
+      <p class="hint">Commerzbank, HypoVereinsbank und Amex kommen über dein CRM (Bank → „Bankabruf für Daily“). Dort verbindest du die Banken und erzeugst den Schlüssel. Daily holt die Buchungen beim Öffnen der Finanzen selbst ab.</p>
+      ${st.error ? `<p class="fin-msg bad">${esc(st.error)}</p>` : ''}
+      <form class="fin-bank-form" data-fin-form="bank"><input name="url" type="url" placeholder="Adresse aus dem CRM (…/api/daily/finance)" value="${esc(cfg.url || '')}" autocomplete="off"><input name="key" type="password" placeholder="${cfg.key ? 'Schlüssel gespeichert – zum Ändern neu einfügen' : 'Schlüssel aus dem CRM (dly_…)'}" autocomplete="off"><button class="btn small">Speichern</button></form>
+      ${cfg.key ? `<div class="row-btns"><button class="btn ghost small" data-fin="bank-pull">${ms('sync')} Jetzt abrufen</button></div>` : ''}
+      ${accs.length ? `<h4>Konten</h4><p class="hint">Ordne jedes Bankkonto dem Konto zu, wie es bisher in Daily heißt. Sonst zählt es als eigenes Konto (Kontostand doppelt).</p><div class="fin-bank-accs">${accs.map(a => {
+        const guess = ((cfg.map || {})[a.account]) || '';
+        const days = a.validUntil ? Math.ceil((Date.parse(a.validUntil) - Date.now()) / 864e5) : null;
+        return `<div class="fin-bank-acc"><div><b>${esc(a.bank)} · ${esc(a.account)}</b><small>${a.balance != null ? eur(a.balance) + ' · ' : ''}${days != null ? (days > 0 ? `Freigabe noch ${days} Tage` : 'Freigabe abgelaufen – im CRM neu verbinden') : ''}${a.lastError ? ' · Fehler: ' + esc(a.lastError) : ''}</small></div>
+          <select data-fin="bank-map" data-acc="${esc(a.account)}"><option value="">Eigenes Konto „${esc(a.account)}“</option>${names.map(n => `<option${n === guess ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></div>`;
+      }).join('')}</div>` : ''}
+    </details>`;
+  }
+
   function enriched() {
-    return S.finance.map(t => {
+    const hide = hiddenBank(S.finance);
+    return S.finance.filter(t => !hide.has(t.id)).map(t => {
       if (t.kind === 'summary') return { ...t, how: 'numbers', g: catGroup(t.cat) || t.g };
       const c = categorize(t);
       return { ...t, cat: c.cat, how: c.how, g: c.cat ? catGroup(c.cat) || t.g : null };
@@ -887,7 +987,7 @@
         <div><span>Noch erwartet</span><b>${eur0(openIn)}</b><small>feste Einnahmen</small></div>
         <div><span>Übrig zum Monatsende</span><b class="${left >= 0 ? 'ok' : 'bad'}">${eur0(left)}</b><small>frei + erwartet − offen</small></div>
       </section>
-      <p class="hint">${last ? `Abgleich mit den Buchungen bis ${fmtD(last)}.` : `Für ${MONTHS_LONG[+key.slice(5, 7) - 1]} sind noch keine Buchungen eingelesen${lastAny ? ` (letzte vom ${fmtD(lastAny)})` : ''}.`} Für einen frischen Stand den Finanzguru-Export unter Übersicht → „Datei einlesen“ laden. Erkannt wird über ein Suchwort (in den Standard-Ausgaben unter Vorschau) oder den Namen und den Betrag; was nicht erkannt wird, hakst du von Hand ab. Am 1. beginnt jeder Monat wieder offen.</p>
+      <p class="hint">${last ? `Abgleich mit den Buchungen bis ${fmtD(last)}.` : `Für ${MONTHS_LONG[+key.slice(5, 7) - 1]} sind noch keine Buchungen eingelesen${lastAny ? ` (letzte vom ${fmtD(lastAny)})` : ''}.`} ${bankCfg() && bankCfg().key ? 'Die Buchungen kommen automatisch per Bankabruf aus dem CRM.' : 'Für einen frischen Stand den Finanzguru-Export unter Übersicht → „Datei einlesen“ laden oder unter Übersicht den automatischen Bankabruf einrichten.'} Erkannt wird über ein Suchwort (in den Standard-Ausgaben unter Vorschau) oder den Namen und den Betrag; was nicht erkannt wird, hakst du von Hand ab. Am 1. beginnt jeder Monat wieder offen.</p>
       ${items.length ? groups : `<section class="set"><p class="hint">Noch keine Standard-Posten. Unter Finanzen → Vorschau → „Standard-Ausgaben pro Monat“ anlegen.</p></section>`}
       ${unmatched.length ? `<details class="set fin-assets" open><summary>Ausgaben diesen Monat ohne Standard-Posten (${unmatched.length})</summary>
         <p class="hint">Einem Posten oben zuordnen (er gilt dann als abgebucht und wird nächsten Monat von selbst erkannt), direkt als neuen Standard-Posten übernehmen oder als einmalige Ausgabe ausblenden. Versehentlich angelegte Standard-Posten löschst du unter Vorschau → Standard-Ausgaben mit dem Papierkorb.</p>
@@ -916,6 +1016,7 @@
 
   function view(main, part) {
     ui.part = part || ui.part || 'uebersicht';
+    pullBank(false).then(n => { if (n != null) rerender(); });
     if (ui.part !== 'uebersicht') return partView(main, ui.part);
     const all = enriched();
     const tx = all.filter(t => t.kind !== 'summary');
@@ -983,6 +1084,7 @@
       <header class="page-head row"><div><h1>Finanzen · Übersicht</h1><p>Einnahmen und Ausgaben · ${esc(period)}</p></div>
         <label class="btn ghost fin-import">${ms('upload')} ${ui.busy ? 'Liest ein …' : 'Datei einlesen'}<input type="file" accept=".csv,.xlsx,.xls,text/csv" multiple hidden data-fin="import"></label></header>
       ${ui.msg ? `<p class="fin-msg">${esc(ui.msg)}</p>` : ''}
+      ${bankBox()}
       ${!all.length ? `<section class="set"><h3>Noch keine Buchungen</h3><p class="hint">Lies den Finanzguru-Export (Excel) oder eine CSV aus dem Online-Banking über „Datei einlesen“ ein. Mehrfaches Einlesen erzeugt keine doppelten Buchungen.</p></section>` : `
       <div class="chips fin-years">${years.map(y => `<button class="chip" aria-pressed="${y === ui.year}" data-fin="year" data-y="${y}">${y}</button>`).join('')}</div>
       <div class="chips fin-months"><button class="chip" aria-pressed="${ui.month === null}" data-fin="month" data-m="">Ganzes Jahr</button>${MONTHS.map((m, i) => `<button class="chip" aria-pressed="${ui.month === i}" data-fin="month" data-m="${i}">${m}</button>`).join('')}</div>
@@ -1021,6 +1123,7 @@
     if (a === 'year') { ui.year = b.dataset.y; ui.month = null; ui.msg = ''; rerender(); }
     else if (a === 'month') { ui.month = b.dataset.m === '' ? null : +b.dataset.m; ui.msg = ''; rerender(); }
     else if (a === 'filter') { ui.filter = b.dataset.f; rerender(); }
+    else if (a === 'bank-pull') { ui.msg = 'Rufe die Bankbuchungen ab …'; rerender(); pullBank(true).then(n => { ui.msg = n == null ? '' : `${n} neue Buchungen vom Bankabruf.`; rerender(); }); }
     else if (a === 'rule') {
       const row = b.closest('.fin-row');
       const t = S.finance.find(x => x.id === row.dataset.id);
@@ -1151,9 +1254,34 @@
       S.saveFmeta({ ...om, order: [...next, ...(om.order || []).filter(k => !next.includes(k))] });
     } else if (a === 'asset-del') { ui.assetsOpen = true; S.deleteFmeta(b.dataset.id); }
   });
+  document.addEventListener('submit', ev => {
+    const f = ev.target.closest && ev.target.closest('[data-fin-form="bank"]');
+    if (!f) return;
+    ev.preventDefault();
+    const cfg = bankCfg() || { id: '_bankabruf', type: 'bank' };
+    const url = f.url.value.trim(), key = f.key.value.trim();
+    if (url && !/^https:\/\/.+\/api\/daily\/finance\/?$/.test(url) && !/^http:\/\/localhost/.test(url)) { ui.msg = 'Die Adresse muss auf /api/daily/finance enden (steht im CRM unter Bank).'; rerender(); return; }
+    S.saveFmeta({ ...cfg, url, ...(key ? { key } : {}) });
+    localStorage.removeItem('tb-bank-status');
+    ui.msg = 'Bankabruf gespeichert.';
+    pullBank(true).then(n => { ui.msg = n == null ? '' : `Bankabruf eingerichtet: ${n} Buchungen übernommen.`; rerender(); });
+    rerender();
+  });
   document.addEventListener('change', async ev => {
     const el = ev.target;
     if (!el.closest || !el.closest('.fin') || !el.dataset.fin) return;
+    if (el.dataset.fin === 'bank-map') {
+      const cfg = bankCfg(); if (!cfg) return;
+      const acc = el.dataset.acc, before = mapAccount(cfg, acc), after = el.value || acc;
+      const map = { ...(cfg.map || {}) };
+      map[acc] = el.value; // leer = eigenes Konto
+      S.saveFmeta({ ...cfg, map });
+      // schon abgerufene Buchungen des Kontos umhängen
+      const move = S.finance.filter(t => (t.id || '').startsWith('eb-') && t.account === before).map(t => ({ ...t, account: after }));
+      if (move.length) S.saveFinance(move, true);
+      rerender();
+      return;
+    }
     if (el.dataset.fin === 'assign' && el.value) {
       const t = S.finance.find(x => x.id === el.dataset.tx);
       if (!t) return;

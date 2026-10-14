@@ -786,3 +786,12 @@ img.missing { opacity: .35; }
 .fin-x { border: 0; background: none; color: var(--ink-3); cursor: pointer; font-size: 14px; padding: 0 2px; }
 .fin-unm { flex-wrap: wrap; }
 .fin-unm select { height: 34px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 0 8px; font-size: 14px; }
+.fin-bank summary { display: flex; align-items: center; gap: 6px; }
+.fin-bank-form { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.fin-bank-form input { flex: 1 1 220px; }
+.fin-bank-accs { display: grid; gap: 10px; margin-top: 6px; }
+.fin-bank-acc { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+.fin-bank-acc > div { display: flex; flex-direction: column; min-width: 0; }
+.fin-bank-acc small { color: var(--ink-3); font-size: 12.5px; }
+.fin-bank-acc select { max-width: 260px; }
+.fin-msg.bad { color: var(--danger); }
