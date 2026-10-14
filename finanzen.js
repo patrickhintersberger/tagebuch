@@ -801,13 +801,20 @@
       const res = await fetch(cfg.url.replace(/\/$/, '') + '?since=' + since, { headers: { Authorization: 'Bearer ' + cfg.key }, cache: 'no-store' });
       if (res.status === 401) throw new Error('Der Schlüssel stimmt nicht. Im CRM unter Bank → „Bankabruf für Daily“ einen neuen erzeugen.');
       if (!res.ok) throw new Error('Das CRM antwortet mit Fehler ' + res.status + '.');
-      const data = await res.json();
+      let data = await res.json();
+      // Neu verbundenes Konto: einmal die ganzen letzten 90 Tage holen, sonst fehlt seine Vorgeschichte
+      const fresh = (data.accounts || []).filter(a => !(cfg.seen || []).includes(a.account));
+      if (fresh.length && newest) {
+        const all = await fetch(cfg.url.replace(/\/$/, '') + '?since=' + new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10), { headers: { Authorization: 'Bearer ' + cfg.key }, cache: 'no-store' });
+        if (all.ok) data = await all.json();
+      }
+      if (fresh.length) { cfg.seen = [...new Set([...(cfg.seen || []), ...(data.accounts || []).map(a => a.account)])]; S.saveFmeta({ ...bankCfg(), seen: cfg.seen }); }
       // Neue Bankkonten einmalig dem passenden bisherigen Konto zuordnen (lässt sich im Kasten ändern)
       const names = [...new Set(S.finance.filter(t => t.account && !(t.id || '').startsWith('eb-')).map(t => t.account))];
       const map = { ...(cfg.map || {}) };
       let changed = false;
       (data.accounts || []).forEach(a => { if (!(a.account in map)) { map[a.account] = guessAccount(a, names); changed = true; } });
-      if (changed) { S.saveFmeta({ ...cfg, map }); cfg.map = map; }
+      if (changed) { S.saveFmeta({ ...bankCfg(), map }); cfg.map = map; }
       // Kontostände: vom aktuellen Saldo rückwärts durch die abgerufenen Buchungen
       const bal = {};
       (data.accounts || []).forEach(a => { if (a.balance != null) bal[a.account] = a.balance; });
