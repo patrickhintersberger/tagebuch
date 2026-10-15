@@ -844,9 +844,13 @@
   }
   // Bank-Buchungen, die schon aus einem Finanzguru-Export da sind (gleicher Betrag, gleiches Konto, bis 3 Tage Abstand)
   function hiddenBank(list) {
-    const hide = new Set();
-    const eb = list.filter(t => t.id && t.id.startsWith('eb-'));
+    const hide = new Set(list.filter(t => t.dup).map(t => t.id)); // von Hand als Doppelung markiert
+    const eb = list.filter(t => t.id && t.id.startsWith('eb-') && !t.dup);
     if (!eb.length) return hide;
+    // dieselbe Bank-Buchung zweimal (HVB liefert sie ohne Buchungsnummer, nur anders umbrochen)
+    const squash = x => String(x || '').replace(/\s+/g, '').toLowerCase();
+    const seenEb = new Set();
+    eb.forEach(t => { const k = `${t.account}|${t.date}|${t.amount}|${squash(t.payee)}|${squash(t.text)}`; if (seenEb.has(k)) hide.add(t.id); else seenEb.add(k); });
     const byAmt = new Map();
     list.forEach(t => { if (t.kind !== 'summary' && t.id && !t.id.startsWith('eb-')) { if (!byAmt.has(t.amount)) byAmt.set(t.amount, []); byAmt.get(t.amount).push(t); } });
     const used = new Set();
@@ -971,7 +975,7 @@
       if (!list.length) return '';
       return `<details class="fin-mtxs"><summary>${list.length} ${list.length === 1 ? 'Buchung' : 'Buchungen'}${it.cat ? ` aus „${esc(it.cat.name)}“` : ''}</summary>
         ${list.map(t => `<div class="fin-mtx" data-id="${esc(t.id)}"><span>${fmtD(t.date)}</span><span class="fin-mtx-who">${esc(t.payee || t.text || 'Buchung')}${t.account ? `<small>${esc(t.account)}</small>` : ''}</span><b>${eur(-t.amount)}</b>
-          ${it.catTx.includes(t) ? `<select data-fin="cat" aria-label="Kategorie von ${esc(t.payee || 'Buchung')}">${catOptions(t.cat)}</select>` : '<small>zugeordnet</small>'}</div>`).join('')}
+          <span class="fin-mtx-act">${it.catTx.includes(t) ? `<select data-fin="cat" aria-label="Kategorie von ${esc(t.payee || 'Buchung')}">${catOptions(t.cat)}</select>` : '<small>zugeordnet</small>'}<button class="chip" data-fin="dup" title="Diese Buchung ist doppelt – ausblenden">Doppelt</button></span></div>`).join('')}
         ${it.cat ? '<p class="hint">Gehört eine Buchung nicht dazu, gib ihr eine andere Kategorie. Für dieselbe Firma künftig immer: in der Übersicht „Immer so“.</p>' : ''}</details>`;
     };
     const row = it => {
@@ -1029,7 +1033,7 @@
     const sub = part === 'monat' ? 'Standard-Posten abhaken und abgleichen' : 'Kontostand der nächsten Monate, Standard-Ausgaben und was du verdienen musst';
     main.innerHTML = `<div class="page fin">
       <header class="page-head"><div><h1>Finanzen · ${title}</h1><p>${sub}</p></div></header>
-      ${ui.msg ? `<p class="fin-msg">${esc(ui.msg)}</p>` : ''}
+      ${ui.msg ? `<p class="fin-msg">${esc(ui.msg)}${ui.undo ? ` <button class="chip" data-fin="undup" data-id="${esc(ui.undo)}">Rückgängig</button>` : ''}</p>` : ''}
       ${part === 'monat' ? monthView(tx, index, meta) : forecastView(counted, index, meta)}
     </div>`;
   }
@@ -1103,7 +1107,7 @@
     main.innerHTML = `<div class="page fin">
       <header class="page-head row"><div><h1>Finanzen · Übersicht</h1><p>Einnahmen und Ausgaben · ${esc(period)}</p></div>
         <label class="btn ghost fin-import">${ms('upload')} ${ui.busy ? 'Liest ein …' : 'Datei einlesen'}<input type="file" accept=".csv,.xlsx,.xls,text/csv" multiple hidden data-fin="import"></label></header>
-      ${ui.msg ? `<p class="fin-msg">${esc(ui.msg)}</p>` : ''}
+      ${ui.msg ? `<p class="fin-msg">${esc(ui.msg)}${ui.undo ? ` <button class="chip" data-fin="undup" data-id="${esc(ui.undo)}">Rückgängig</button>` : ''}</p>` : ''}
       ${bankBox()}
       ${!all.length ? `<section class="set"><h3>Noch keine Buchungen</h3><p class="hint">Lies den Finanzguru-Export (Excel) oder eine CSV aus dem Online-Banking über „Datei einlesen“ ein. Mehrfaches Einlesen erzeugt keine doppelten Buchungen.</p></section>` : `
       <div class="chips fin-years">${years.map(y => `<button class="chip" aria-pressed="${y === ui.year}" data-fin="year" data-y="${y}">${y}</button>`).join('')}</div>
@@ -1127,7 +1131,7 @@
           <div class="fin-main"><b>${esc(t.payee || t.text || 'Ohne Namen')}</b><small>${new Date(t.date).toLocaleDateString('de-DE')}${t.account ? ' · ' + esc(t.account) : ''}${t.fgCat ? ' · ' + esc(t.fgCat) : ''}${t.note ? ' · ' + esc(t.note) : ''}</small></div>
           <b class="fin-amt ${t.amount < 0 ? 'neg' : 'pos'}">${eur(t.amount)}</b>
           <div class="fin-cat"><select data-fin="cat" aria-label="Kategorie">${options(t.cat)}</select>${t.how && t.how !== 'hand' ? `<small>${how[t.how] || ''}</small>` : ''}
-          ${t.payee ? `<button class="chip" data-fin="rule" title="Alle Buchungen von „${esc(t.payee)}“ künftig so zuordnen">Immer so</button>` : ''}</div>
+          ${t.payee ? `<button class="chip" data-fin="rule" title="Alle Buchungen von „${esc(t.payee)}“ künftig so zuordnen">Immer so</button>` : ''}<button class="chip" data-fin="dup" title="Diese Buchung ist doppelt – ausblenden">Doppelt</button></div>
         </div>`).join('')}</div>${listSrc.length > shown.length ? `<p class="hint">Es werden die neuesten 200 von ${listSrc.length} angezeigt.</p>` : ''}` : `<p class="hint">${ui.filter === 'open' ? 'Alle Buchungen haben eine Kategorie.' : 'Keine Buchungen im gewählten Zeitraum.'}</p>`}
       ${userRules().length ? `<details class="set fin-rules"><summary>Eigene Regeln (${userRules().length})</summary><div class="list">${userRules().map(r => `<div class="listrow"><span>„${esc(r.match)}“ → ${esc(r.cat)}</span><button class="icon-btn" data-fin="rule-del" data-id="${esc(r.id)}" aria-label="Regel löschen">${ms('delete')}</button></div>`).join('')}</div></details>` : ''}
       <p class="hint">Monate mit Werten in deiner Numbers-Jahresübersicht zeigen diese Werte, die übrigen Monate rechnen aus den Buchungen.</p>`}
@@ -1143,6 +1147,17 @@
     if (a === 'year') { ui.year = b.dataset.y; ui.month = null; ui.msg = ''; rerender(); }
     else if (a === 'month') { ui.month = b.dataset.m === '' ? null : +b.dataset.m; ui.msg = ''; rerender(); }
     else if (a === 'filter') { ui.filter = b.dataset.f; rerender(); }
+    else if (a === 'dup' || a === 'undup') {
+      const id = b.dataset.id || (b.closest('.fin-row, .fin-mtx') || {}).dataset.id;
+      const t = S.finance.find(x => x.id === id);
+      if (t) {
+        const n = { ...t }; if (a === 'dup') n.dup = true; else delete n.dup;
+        S.saveFinance([n], true);
+        ui.msg = a === 'dup' ? `„${(t.payee || t.text || 'Buchung').slice(0, 40)}“ (${eur(t.amount)}) als Doppelung ausgeblendet.` : 'Buchung wieder eingeblendet.';
+        ui.undo = a === 'dup' ? id : null;
+        rerender();
+      }
+    }
     else if (a === 'bank-pull') { ui.msg = 'Rufe die Bankbuchungen ab …'; rerender(); pullBank(true).then(n => { ui.msg = n == null ? '' : `${n} neue Buchungen vom Bankabruf.`; rerender(); }); }
     else if (a === 'rule') {
       const row = b.closest('.fin-row');
